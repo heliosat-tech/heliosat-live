@@ -1,0 +1,43 @@
+version: 1
+cache_ttl_seconds: 1800
+canonical_variables:
+  - bx_gsm
+  - by_gsm
+  - bz_gsm
+  - b_total
+  - solar_wind_speed
+  - proton_density
+  - proton_temperature
+  - dynamic_pressure
+  - electric_field
+  - kp
+  - dst
+  - electron_flux
+  - proton_flux
+  - heavy_ion_flux
+  - xray_flux
+  - euv_flux
+  - vertical_tec
+  - slant_tec
+  - position_gse
+  - orbital_drag_proxy
+strata:
+  - all
+  - solar_min
+  - solar_max
+  - quiet
+  - storm
+context_indices:
+  kp:
+    provider: "NOAA SWPC"
+    endpoint: "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+  dst:
+    provider: "NOAA SWPC / Kyoto"
+    endpoint: "https://services.swpc.noaa.gov/products/kyoto-dst.json"
+  f107:
+    provider: "NOAA SWPC"
+    endpoint: "https://services.swpc.noaa.gov/json/f107_cm_flux.json"
+outputs:
+  stats_table: "variable_stats.parquet"
+  figures_dir: "artifacts/univariate-eda"
+  notebook: "notebooks/univariate_eda.ipynb"

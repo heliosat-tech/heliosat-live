@@ -1,0 +1,22 @@
+version: sequence-models-v1
+gate:
+  require_best_baseline_skill_gt: 0.05
+  compare_against: best_lightgbm_or_best_available_baseline
+input:
+  window_minutes: 120
+  horizons_minutes: [30, 60, 90]
+  scaler: standard_scaler_fit_train_only
+training:
+  optimizer: adamw
+  scheduler: cosine_annealing
+  early_stopping_metric: val_loss
+  mixed_precision: auto_if_gpu
+architectures:
+  - lstm_encoder_decoder_attention
+  - tcn
+  - patchtst
+  - nhits
+  - tft_optional
+outputs:
+  model_artifacts: local://data/sequence-models/
+  leaderboard_integration: data/model-runs/runs.db

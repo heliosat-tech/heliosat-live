@@ -1,0 +1,275 @@
+version: 1
+schema:
+  native_name: string
+  canonical_name: string
+  unit: string
+  coordinate_system: string|null
+  notes: string
+
+variables:
+  - canonical_name: bx_gsm
+    label: "Bx GSM"
+    unit: "nT"
+    aliases:
+      DSCOVR_RTSW: ["bx_gsm"]
+      ACE_HAPI: ["BGSMc.x", "BGSEc.x"]
+      WIND_HAPI: ["BGSMc.x"]
+      IMAP_HAPI: ["mag_B_GSM.x"]
+      OMNI_HRO: ["BX_GSM", "BX_GSE"]
+    notes: "Prefer GSM when available; preserve native coordinate metadata during ingestion."
+
+  - canonical_name: by_gsm
+    label: "By GSM"
+    unit: "nT"
+    aliases:
+      DSCOVR_RTSW: ["by_gsm"]
+      ACE_HAPI: ["BGSMc.y", "BGSEc.y"]
+      WIND_HAPI: ["BGSMc.y"]
+      IMAP_HAPI: ["mag_B_GSM.y"]
+      OMNI_HRO: ["BY_GSM", "BY_GSE"]
+    notes: "Prefer GSM when available; preserve native coordinate metadata during ingestion."
+
+  - canonical_name: bz_gsm
+    label: "Bz GSM"
+    unit: "nT"
+    aliases:
+      DSCOVR_RTSW: ["bz_gsm"]
+      ACE_HAPI: ["BGSMc.z", "BGSEc.z"]
+      WIND_HAPI: ["BGSMc.z"]
+      IMAP_HAPI: ["mag_B_GSM.z"]
+      OMNI_HRO: ["BZ_GSM", "BZ_GSE"]
+    notes: "Maps the common Bz source names used by DSCOVR, ACE, WIND, IMAP, and OMNI."
+
+  - canonical_name: b_total
+    label: "|B|"
+    unit: "nT"
+    aliases:
+      DSCOVR_RTSW: ["bt"]
+      ACE_HAPI: ["Magnitude"]
+      WIND_HAPI: ["BF1"]
+      IMAP_HAPI: ["mag_B_magnitude"]
+      OMNI_HRO: ["ABS_B", "B"]
+    notes: "Magnetic-field magnitude."
+
+  - canonical_name: solar_wind_speed
+    label: "V"
+    unit: "km/s"
+    aliases:
+      DSCOVR_RTSW: ["speed"]
+      ACE_HAPI: ["Vp"]
+      WIND_HAPI: ["V_GSE", "THERMAL_SPD"]
+      IMAP_HAPI: ["swapi_pseudo_proton_speed"]
+      OMNI_HRO: ["flow_speed", "V"]
+    notes: "Bulk solar-wind speed; thermal speed remains a separate native variable."
+
+  - canonical_name: proton_density
+    label: "Np"
+    unit: "cm^-3"
+    aliases:
+      DSCOVR_RTSW: ["density"]
+      ACE_HAPI: ["Np"]
+      WIND_HAPI: ["Np"]
+      IMAP_HAPI: ["swapi_pseudo_proton_density"]
+      OMNI_HRO: ["proton_density", "N"]
+    notes: "Solar-wind proton number density."
+
+  - canonical_name: proton_temperature
+    label: "Tp"
+    unit: "K"
+    aliases:
+      DSCOVR_RTSW: ["temperature"]
+      ACE_HAPI: ["Tpr"]
+      WIND_HAPI: ["THERMAL_SPD"]
+      IMAP_HAPI: ["swapi_pseudo_proton_temperature"]
+      OMNI_HRO: ["T", "proton_temperature"]
+    notes: "Preserve native temperature representation; WIND thermal speed requires explicit conversion before using this canonical name."
+
+  - canonical_name: dynamic_pressure
+    label: "Dynamic pressure"
+    unit: "nPa"
+    aliases:
+      OMNI_HRO: ["Pressure", "flow_pressure", "Pdyn"]
+      DERIVED: ["proton_density+solar_wind_speed"]
+    notes: "May be directly ingested from OMNI or derived from density and speed with derivation metadata."
+
+  - canonical_name: electric_field
+    label: "Electric field"
+    unit: "mV/m"
+    aliases:
+      OMNI_HRO: ["E", "electric_field"]
+      DERIVED: ["solar_wind_speed*bz_gsm"]
+    notes: "Usually derived coupling electric field unless the source provides it directly."
+
+  - canonical_name: kp
+    label: "Kp"
+    unit: "index"
+    aliases:
+      OMNI_HRO: ["Kp", "KP"]
+      NOAA_SWPC: ["planetary_k_index", "kp_index"]
+    notes: "Planetary K index."
+
+  - canonical_name: dst
+    label: "Dst"
+    unit: "nT"
+    aliases:
+      OMNI_HRO: ["Dst", "DST"]
+      WDC_KYOTO: ["Dst"]
+    notes: "Disturbance storm time index."
+
+  - canonical_name: goes_mag_hn
+    label: "GOES MAG Hn"
+    unit: "nT"
+    aliases:
+      GOES_NCEI: ["b_epn.N", "b_epnu.N"]
+      GOES_SWPC_JSON: ["Hn"]
+    notes: "GOES-R local geomagnetic N component from NCEI MAG b_epn coordinate N."
+
+  - canonical_name: goes_mag_hp
+    label: "GOES MAG Hp"
+    unit: "nT"
+    aliases:
+      GOES_NCEI: ["b_epn.P", "b_epnu.P"]
+      GOES_SWPC_JSON: ["Hp"]
+    notes: "GOES-R local geomagnetic P component from NCEI MAG b_epn coordinate P."
+
+  - canonical_name: goes_mag_he
+    label: "GOES MAG He"
+    unit: "nT"
+    aliases:
+      GOES_NCEI: ["b_epn.E", "b_epnu.E"]
+      GOES_SWPC_JSON: ["He"]
+    notes: "GOES-R local geomagnetic E component from NCEI MAG b_epn coordinate E."
+
+  - canonical_name: goes_mag_h_magnitude
+    label: "GOES MAG |H|"
+    unit: "nT"
+    aliases:
+      GOES_NCEI: ["sqrt(b_epn.E^2+b_epn.P^2+b_epn.N^2)", "b_total"]
+      GOES_SWPC_JSON: ["total"]
+    notes: "Primary target variable; stored as sqrt(HN^2+HP^2+HE^2) during NCEI post-processing."
+
+  - canonical_name: goes_electrons_2mev
+    label: "GOES electrons >=2 MeV"
+    unit: "pfu"
+    aliases:
+      GOES_NCEI: ["AvgIntElectronFlux"]
+      GOES_SWPC_JSON: [">=2 MeV"]
+    notes: "SEISS MPSH integral electron flux channel nearest >=2 MeV."
+
+  - canonical_name: goes_electrons_800kev
+    label: "GOES electrons >=800 keV"
+    unit: "pfu"
+    aliases:
+      GOES_NCEI: ["AvgDiffElectronFlux@800keV"]
+    notes: "SEISS MPSH electron flux channel nearest 800 keV."
+
+  - canonical_name: goes_protons_10mev
+    label: "GOES protons >=10 MeV"
+    unit: "pfu"
+    aliases:
+      GOES_NCEI: ["AvgIntProtonFlux@10MeV"]
+      GOES_SWPC_JSON: [">=10 MeV"]
+    notes: "SEISS SGPS integral proton flux channel nearest >=10 MeV."
+
+  - canonical_name: goes_protons_50mev
+    label: "GOES protons >=50 MeV"
+    unit: "pfu"
+    aliases:
+      GOES_NCEI: ["AvgIntProtonFlux@50MeV"]
+      GOES_SWPC_JSON: [">=50 MeV"]
+    notes: "SEISS SGPS integral proton flux channel nearest >=50 MeV."
+
+  - canonical_name: goes_protons_100mev
+    label: "GOES protons >=100 MeV"
+    unit: "pfu"
+    aliases:
+      GOES_NCEI: ["AvgIntProtonFlux@100MeV"]
+      GOES_SWPC_JSON: [">=100 MeV"]
+    notes: "SEISS SGPS integral proton flux channel nearest >=100 MeV."
+
+  - canonical_name: goes_xrs_short_flux
+    label: "GOES XRS 0.05-0.4 nm"
+    unit: "W/m^2"
+    aliases:
+      GOES_NCEI: ["xrsa_flux"]
+      GOES_SWPC_JSON: ["0.05-0.4nm"]
+    notes: "EXIS XRS-A short-wavelength soft X-ray flux."
+
+  - canonical_name: goes_xrs_long_flux
+    label: "GOES XRS 0.1-0.8 nm"
+    unit: "W/m^2"
+    aliases:
+      GOES_NCEI: ["xrsb_flux"]
+      GOES_SWPC_JSON: ["0.1-0.8nm"]
+    notes: "EXIS XRS-B long-wavelength soft X-ray flux used for NOAA flare classes."
+
+sources:
+  goes_nccei:
+    source_id: "ncei-goes-r-mag-seiss"
+    provider: "NOAA NCEI"
+    protocol: "archive-files"
+    format: "NetCDF"
+    root_url: "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes{N}/l2/data/{product}/{year}/{month}/"
+    partitioning: ["source", "spacecraft", "year", "month"]
+    spacecraft: ["GOES-16", "GOES-17", "GOES-18", "GOES-19"]
+    products:
+      mag:
+        native_product: "magn-l2-avg1m"
+        cadence_s: 60
+        variables:
+          goes_mag_he:
+            native: "b_epn[coordinate=E]"
+            unit: "nT"
+            transform: "identity"
+          goes_mag_hp:
+            native: "b_epn[coordinate=P]"
+            unit: "nT"
+            transform: "identity"
+          goes_mag_hn:
+            native: "b_epn[coordinate=N]"
+            unit: "nT"
+            transform: "identity"
+          goes_mag_h_magnitude:
+            native: "b_epn"
+            unit: "nT"
+            transform: "sqrt(HN^2+HP^2+HE^2)"
+      mpsh:
+        native_product: "mpsh-l2-avg1m"
+        cadence_s: 60
+        variables:
+          goes_electrons_2mev:
+            native: "AvgIntElectronFlux"
+            unit: "pfu"
+            transform: "identity"
+          goes_electrons_800kev:
+            native: "AvgDiffElectronFlux"
+            unit: "pfu"
+            transform: "select_nearest_energy(800keV)"
+      sgps:
+        native_product: "sgps-l2-avg1m"
+        cadence_s: 60
+        variables:
+          goes_protons_10mev:
+            native: "AvgIntProtonFlux"
+            unit: "pfu"
+            transform: "select_nearest_energy(10MeV)"
+          goes_protons_50mev:
+            native: "AvgIntProtonFlux"
+            unit: "pfu"
+            transform: "select_nearest_energy(50MeV)"
+          goes_protons_100mev:
+            native: "AvgIntProtonFlux"
+            unit: "pfu"
+            transform: "select_nearest_energy(100MeV)"
+      xrs:
+        native_product: "xrsf-l2-avg1m"
+        cadence_s: 60
+        variables:
+          goes_xrs_short_flux:
+            native: "xrsa_flux"
+            unit: "W/m^2"
+            transform: "identity"
+          goes_xrs_long_flux:
+            native: "xrsb_flux"
+            unit: "W/m^2"
+            transform: "identity"

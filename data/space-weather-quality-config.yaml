@@ -1,0 +1,26 @@
+version: 1
+default_windows: ["1h", "24h", "7d", "30d", "1y", "all"]
+coverage_heatmap:
+  bucket: "day"
+  expected_basis: "nominal_cadence"
+gap_detection:
+  minimum_missing_cadences: 1.5
+outliers:
+  robust_z_score:
+    sliding_window_points: 31
+    threshold: 3.5
+  iqr:
+    sliding_window_points: 31
+    fence_multiplier: 1.5
+canonical_variables:
+  - bx_gsm
+  - by_gsm
+  - bz_gsm
+  - b_total
+  - solar_wind_speed
+  - proton_density
+  - proton_temperature
+  - dynamic_pressure
+  - electric_field
+  - kp
+  - dst

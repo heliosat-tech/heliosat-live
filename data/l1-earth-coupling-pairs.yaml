@@ -1,0 +1,50 @@
+version: 1
+grid_cadence_seconds: 60
+lag_minutes:
+  min: -30
+  max: 180
+  step: 1
+rolling_window_hours: 24
+pairs:
+  - l1_source: DSCOVR
+    l1_variable: bz_gsm
+    earth_source: GOES
+    earth_variable: goes_mag_hn
+    earth_orbit: GEO
+    label: "DSCOVR.Bz_GSM -> GOES-R.MAG.Hn"
+  - l1_source: DSCOVR
+    l1_variable: by_gsm
+    earth_source: GOES
+    earth_variable: goes_mag_he
+    earth_orbit: GEO
+    label: "DSCOVR.By_GSM -> GOES-R.MAG.He"
+  - l1_source: DSCOVR
+    l1_variable: b_total
+    earth_source: GOES
+    earth_variable: goes_mag_total
+    earth_orbit: GEO
+    label: "DSCOVR.|B| -> GOES-R.MAG.total"
+  - l1_source: DSCOVR
+    l1_variable: solar_wind_speed
+    earth_source: GOES
+    earth_variable: goes_mag_hn
+    earth_orbit: GEO
+    label: "DSCOVR.V -> GOES-R.MAG.Hn"
+  - l1_source: DSCOVR
+    l1_variable: proton_density
+    earth_source: GOES
+    earth_variable: goes_mag_total
+    earth_orbit: GEO
+    label: "DSCOVR.Np -> GOES-R.MAG.total"
+  - l1_source: ACE
+    l1_variable: bz_gse
+    earth_source: GOES
+    earth_variable: goes_mag_hn
+    earth_orbit: GEO
+    label: "ACE.Bz_GSE -> GOES-R.MAG.Hn"
+  - l1_source: WIND
+    l1_variable: bz_gsm
+    earth_source: GOES
+    earth_variable: goes_mag_hn
+    earth_orbit: GEO
+    label: "WIND.Bz_GSM -> GOES-R.MAG.Hn"

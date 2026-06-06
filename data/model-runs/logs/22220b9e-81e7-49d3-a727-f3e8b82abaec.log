@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/Users/martimassomoreno/Desktop/Martí/Projectes/Helios/HelioSat/Heliosat1/HELIOSAT/HELIOSAT/training/run.py", line 62, in main
+    from .data_loader import load_training_dataset
+  File "/Users/martimassomoreno/Desktop/Martí/Projectes/Helios/HelioSat/Heliosat1/HELIOSAT/HELIOSAT/training/data_loader.py", line 7, in <module>
+    import pandas as pd
+ModuleNotFoundError: No module named 'pandas'

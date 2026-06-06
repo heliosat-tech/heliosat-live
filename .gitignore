@@ -1,0 +1,16 @@
+.DS_Store
+.env*.local
+.next/
+.cache/
+node_modules/
+tsconfig.tsbuildinfo
+data/cache/
+data/checkpoints/
+data/parquet/
+data/ml-model/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+data/live-events/
+data/console/

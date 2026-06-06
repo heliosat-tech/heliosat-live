@@ -1,0 +1,23 @@
+version: event-splits-v1
+strategy: expanding_walk_forward_with_event_holdout
+folds:
+  - fold: 1
+    train: 2010-2014
+    validation: 2015
+    test: 2016
+  - fold: 2
+    train: 2010-2015
+    validation: 2016
+    test: 2017
+  - fold: 3
+    train: 2010-2016
+    validation: 2017
+    test: 2018
+event_holdout:
+  selection: all_extreme_events_plus_curated_extremes
+  source: local://data/events/events_catalog.parquet
+  never_in_train: true
+metrics:
+  global: [rmse, mae, r2, bias]
+  robust: [median_absolute_error, p95_error]
+  event: [lead_time_effective, peak_error, recovery_coverage, false_alarm_rate_quiet]

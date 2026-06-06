@@ -1,0 +1,44 @@
+version: baselines-v1
+target: GOES.goes_mag_hn
+horizons_minutes: [30, 60, 90]
+split:
+  type: temporal
+  train_fraction: 0.60
+  validation_fraction: 0.20
+  test_fraction: 0.20
+  event_holdout_source: data/splits_config.yaml
+models:
+  - id: persistence
+    family: naive
+    enabled: true
+  - id: climatology_hour_season
+    family: naive
+    enabled: true
+  - id: ridge
+    family: linear
+    enabled: true
+    lambda: 1.0
+  - id: elastic_net
+    family: linear
+    enabled: true
+    alpha: 0.02
+    l1_ratio: 0.35
+  - id: var
+    family: var
+    enabled: true
+  - id: lightgbm_optuna
+    family: boosting
+    enabled: registered
+    trials: 50
+  - id: xgboost_optuna
+    family: boosting
+    enabled: registered
+    trials: 50
+  - id: catboost_optuna
+    family: boosting
+    enabled: registered
+    trials: 50
+tracking:
+  runs_db: local://data/model-runs/runs.db
+  predictions: local://data/model-runs/predictions.parquet
+  feature_importance: local://data/model-runs/feature_importance.parquet

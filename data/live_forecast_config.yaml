@@ -1,0 +1,16 @@
+version: live-forecast-v1
+trigger:
+  cadence_seconds: 60
+  source_event: new_dscovr_sample
+horizons_minutes: [15, 30, 45, 60, 90]
+serving:
+  api: /api/playground/live-forecast
+  websocket_or_sse: planned
+  latency_budget_seconds: 10
+logging:
+  predictions: local://data/live/predictions_live.parquet
+  drift_metrics: local://data/live/drift_metrics.parquet
+alerts:
+  error_threshold: historical_p95
+  drift_test: ks_distance_vs_train
+  upstream_freshness: pipeline_health

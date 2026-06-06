@@ -1,0 +1,61 @@
+version: features-v1
+grid_cadence_seconds: 60
+target:
+  source: GOES
+  variable: goes_mag_hn
+  label: GOES-R MAG Hn
+  prediction_horizon_minutes: 0
+priority_source:
+  type: phase_4_l1_earth_coupling_top_pairs
+  include_top_n: 8
+lag_features:
+  default_lags_minutes: [0, 5, 10, 15, 20, 30, 45, 60, 75, 90, 120]
+  pair_specific_lag_window_minutes: 15
+  reject_negative_optimal_lags: true
+rolling_stats:
+  windows_minutes: [5, 15, 30, 60, 120]
+  stats: [mean, std, min, max, p10, p90, integral]
+derivatives:
+  first_derivative_minutes: 1
+  second_derivative_minutes: 1
+  differences_minutes: [15, 60]
+candidate_physics_features:
+  enabled: true
+  features:
+    - b_magnitude_candidate
+    - clock_angle
+    - cone_angle
+    - dynamic_pressure_proxy
+    - motional_electric_field_proxy
+    - akasofu_epsilon_proxy
+spectral_features:
+  window_minutes: 60
+  bands_mhz:
+    - id: lt_1_mhz
+      min: 0
+      max: 1
+    - id: pc5_1_7_mhz
+      min: 1
+      max: 7
+    - id: ultra_7_20_mhz
+      min: 7
+      max: 20
+context_features:
+  enabled: true
+  features:
+    - days_since_last_kp_gt_5
+    - target_local_time_proxy_hour
+    - day_of_year_sin
+    - day_of_year_cos
+    - f107_latest
+sample_weights:
+  base_weight: 1
+  event_weight: 3
+  event_rule: latest_kp_gt_5
+causality:
+  max_allowed_source_offset_minutes: 0
+  enforce_no_future_values: true
+store:
+  table: features.parquet
+  partitioning: [feature_store_version, target, year, month]
+  versioning: sha256_config_hash_plus_version_tag
