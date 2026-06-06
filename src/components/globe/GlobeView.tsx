@@ -93,8 +93,16 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
     let isMounted = true;
 
     if (!canCreateWebGLContext()) {
-      setGlobeError('The browser could not create a WebGL context for the 3D globe.');
-      return;
+      const timeout = window.setTimeout(() => {
+        if (isMounted) {
+          setGlobeError('The browser could not create a WebGL context for the 3D globe.');
+        }
+      }, 0);
+
+      return () => {
+        isMounted = false;
+        window.clearTimeout(timeout);
+      };
     }
 
     import('react-globe.gl')

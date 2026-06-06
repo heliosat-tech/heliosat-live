@@ -15,6 +15,9 @@ import { fetchNoaaEphemerisData, fetchNoaaMagnetometerData, fetchNoaaPlasmaData 
 import { fetchNoaaAlerts } from '@/services/noaaAlertsService';
 import { fetchTleGroup } from '@/services/celestrakService';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function Home() {
   const [noaaMagData, noaaPlasmaData, noaaEphemerisData, noaaAlertsData, celestrakData] = await Promise.all([
     fetchNoaaMagnetometerData(),

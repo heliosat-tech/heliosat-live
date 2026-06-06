@@ -12,6 +12,7 @@ export interface NoaaAlertsResponse {
 }
 
 const NOAA_ALERTS_ENDPOINT = 'https://services.swpc.noaa.gov/products/alerts.json';
+const NOAA_ALERTS_FETCH_TIMEOUT_MS = 8_000;
 
 type RawNoaaAlert = {
   product_id?: unknown;
@@ -25,7 +26,10 @@ function getStringValue(value: unknown) {
 
 export async function fetchNoaaAlerts(): Promise<NoaaAlertsResponse> {
   try {
-    const response = await fetch(NOAA_ALERTS_ENDPOINT, { cache: 'no-store' });
+    const response = await fetch(NOAA_ALERTS_ENDPOINT, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(NOAA_ALERTS_FETCH_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
       return {

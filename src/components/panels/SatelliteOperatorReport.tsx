@@ -42,16 +42,15 @@ export const SatelliteOperatorReport: React.FC<SatelliteOperatorReportProps> = (
   compact = false,
 }) => {
   const { selectedTle } = useSatelliteSelection();
-  const [reportTime, setReportTime] = useState<number | null>(null);
+  const [reportTime, setReportTime] = useState(() => Date.now());
 
   useEffect(() => {
-    setReportTime(Date.now());
     const interval = setInterval(() => setReportTime(Date.now()), REPORT_REFRESH_MS);
     return () => clearInterval(interval);
   }, []);
 
   const report = useMemo(() => {
-    const generatedAt = new Date(reportTime ?? 0);
+    const generatedAt = new Date(reportTime);
     const propagatedData = selectedTle ? propagateSatelliteFromTle(selectedTle, generatedAt) : null;
     const arrivalEstimate = estimateEarthArrival(noaaPlasmaData, noaaEphemerisData, generatedAt);
     const physicalFluxState = derivePhysicalFluxState(noaaMagData, noaaPlasmaData);

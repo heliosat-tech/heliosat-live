@@ -44,6 +44,7 @@ const NOAA_PLASMA_ENDPOINT = 'https://services.swpc.noaa.gov/products/solar-wind
 const NOAA_EPHEMERIS_ENDPOINT = 'https://services.swpc.noaa.gov/products/solar-wind/ephemerides.json';
 const NOAA_LIVE_WINDOW_MS = 2 * 60 * 60 * 1000;
 const NOAA_FUTURE_SAMPLE_TOLERANCE_MS = 5 * 60 * 1000;
+const NOAA_FETCH_TIMEOUT_MS = 8_000;
 
 function parseNoaaTimeTag(value: string | null | undefined) {
   if (!value) {
@@ -70,7 +71,10 @@ function isInNoaaLiveWindow(value: string | null | undefined, nowMs = Date.now()
 
 export async function fetchNoaaMagnetometerData(): Promise<NoaaServiceResponse<NoaaMagnetometerData>> {
   try {
-    const response = await fetch(NOAA_MAG_ENDPOINT, { cache: 'no-store' });
+    const response = await fetch(NOAA_MAG_ENDPOINT, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(NOAA_FETCH_TIMEOUT_MS),
+    });
     
     if (!response.ok) {
       return {
@@ -153,7 +157,10 @@ export async function fetchNoaaMagnetometerData(): Promise<NoaaServiceResponse<N
 
 export async function fetchNoaaPlasmaData(): Promise<NoaaServiceResponse<NoaaPlasmaData>> {
   try {
-    const response = await fetch(NOAA_PLASMA_ENDPOINT, { cache: 'no-store' });
+    const response = await fetch(NOAA_PLASMA_ENDPOINT, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(NOAA_FETCH_TIMEOUT_MS),
+    });
     
     if (!response.ok) {
       return {
@@ -228,7 +235,10 @@ export async function fetchNoaaPlasmaData(): Promise<NoaaServiceResponse<NoaaPla
 
 export async function fetchNoaaEphemerisData(): Promise<NoaaServiceResponse<NoaaEphemerisData>> {
   try {
-    const response = await fetch(NOAA_EPHEMERIS_ENDPOINT, { cache: 'no-store' });
+    const response = await fetch(NOAA_EPHEMERIS_ENDPOINT, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(NOAA_FETCH_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
       return {

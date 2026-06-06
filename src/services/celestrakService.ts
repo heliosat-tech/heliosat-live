@@ -12,11 +12,16 @@ export interface CelesTrakResponse {
   tles: SatelliteTLE[];
 }
 
+const CELESTRAK_FETCH_TIMEOUT_MS = 8_000;
+
 export async function fetchTleGroup(groupName: string = 'stations'): Promise<CelesTrakResponse> {
   const CELESTRAK_ENDPOINT = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${groupName}&FORMAT=tle`;
   
   try {
-    const response = await fetch(CELESTRAK_ENDPOINT, { cache: 'no-store' });
+    const response = await fetch(CELESTRAK_ENDPOINT, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(CELESTRAK_FETCH_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
       return {
