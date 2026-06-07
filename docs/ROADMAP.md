@@ -21,12 +21,12 @@ Ordenado por fases; cada una se apoya en la anterior.
 ## Fase 1 — Publicar la plataforma en Vercel 🚀 (~1 h)
 **Objetivo:** que cualquiera pueda ver la web pública online. **Cimiento de todo lo demás.**
 
-- [ ] Crear cuenta en Vercel con GitHub → **Import** del repo `jnavasg16/HELIOSAT`.
-- [ ] **Production Branch = `main`** (main ya contiene todo el trabajo).
-- [ ] Pegar las 2 env vars en Vercel. **NO** poner `HELIOSAT_DISABLE_ADMIN_GATE` (abriría el playground a cualquiera).
-- [ ] Deploy → obtener la URL.
-- [ ] **Supabase → Authentication → URL Configuration:** añadir la URL de Vercel a *Site URL* y `…/auth/callback` a *Redirect URLs* (si no, el login falla en producción).
-- [ ] **Verificar en vivo:** home con datos NOAA/Celestrak en directo; `/playground` y `/console` piden login (gate de admin OK).
+- [X] Crear cuenta en Vercel con GitHub → **Import** del repo `jnavasg16/HELIOSAT`.
+- [X] **Production Branch = `main`** (main ya contiene todo el trabajo).
+- [X] Pegar las 2 env vars en Vercel. **NO** poner `HELIOSAT_DISABLE_ADMIN_GATE` (abriría el playground a cualquiera).
+- [X] Deploy → obtener la URL.
+- [X] **Supabase → Authentication → URL Configuration:** añadir la URL de Vercel a *Site URL* y `…/auth/callback` a *Redirect URLs* (si no, el login falla en producción).
+- [X] **Verificar en vivo:** home con datos NOAA/Celestrak en directo; `/playground` y `/console` piden login (gate de admin OK).
 
 **Entregable:** plataforma pública visible 24/7. 🎉
 

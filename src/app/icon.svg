@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="HelioSat">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="72%">
+      <stop offset="0%" stop-color="#123344"/>
+      <stop offset="58%" stop-color="#061827"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+    <radialGradient id="sun" cx="36%" cy="32%" r="64%">
+      <stop offset="0%" stop-color="#fff7ad"/>
+      <stop offset="48%" stop-color="#facc15"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <circle cx="26" cy="26" r="11" fill="url(#sun)" filter="url(#glow)"/>
+  <circle cx="26" cy="26" r="16" fill="none" stroke="#fbbf24" stroke-opacity=".18" stroke-width="3"/>
+
+  <ellipse
+    cx="32"
+    cy="34"
+    rx="24"
+    ry="12"
+    fill="none"
+    stroke="#22d3ee"
+    stroke-width="3.2"
+    stroke-linecap="round"
+    transform="rotate(-28 32 34)"
+  />
+
+  <g transform="translate(39 39) rotate(-28)">
+    <rect x="-6" y="-4" width="12" height="8" rx="2" fill="#e0f2fe"/>
+    <rect x="-12" y="-2.4" width="5" height="4.8" rx="1" fill="#38bdf8"/>
+    <rect x="7" y="-2.4" width="5" height="4.8" rx="1" fill="#38bdf8"/>
+    <circle cx="0" cy="0" r="1.4" fill="#0f172a"/>
+  </g>
+
+  <path d="M16 48c9 5 22 5 32-1" fill="none" stroke="#67e8f9" stroke-opacity=".22" stroke-width="2" stroke-linecap="round"/>
+</svg>
