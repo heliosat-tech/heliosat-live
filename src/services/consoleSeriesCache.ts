@@ -14,6 +14,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { writeJsonFileBestEffort } from '@/lib/fsCache';
 
 const STORE_DIR = path.join(process.cwd(), 'data', 'console', 'series');
 
@@ -45,10 +46,5 @@ export async function readSeriesCache<T>(window: string): Promise<CachedSeries<T
 }
 
 export async function writeSeriesCache<T>(window: string, payload: T): Promise<void> {
-  try {
-    await fs.mkdir(STORE_DIR, { recursive: true });
-    await fs.writeFile(path.join(STORE_DIR, `${safeKey(window)}.json`), JSON.stringify({ fetchedAtMs: Date.now(), payload }), 'utf8');
-  } catch {
-    /* best-effort cache — never block the response on a write failure */
-  }
+  await writeJsonFileBestEffort(path.join(STORE_DIR, `${safeKey(window)}.json`), { fetchedAtMs: Date.now(), payload });
 }

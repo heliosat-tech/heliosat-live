@@ -13,6 +13,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { writeJsonFileBestEffort } from '@/lib/fsCache';
 import type { L1EventSample } from './liveEventService';
 
 const STORE_DIR = path.join(process.cwd(), 'data', 'console');
@@ -56,8 +57,7 @@ async function readFile(): Promise<ArchiveFile | null> {
 }
 
 async function writeFile(file: ArchiveFile): Promise<void> {
-  await fs.mkdir(STORE_DIR, { recursive: true });
-  await fs.writeFile(STORE_PATH, JSON.stringify(file), 'utf8');
+  await writeJsonFileBestEffort(STORE_PATH, file);
 }
 
 export async function getAceArchiveStatus(): Promise<AceArchiveStatus> {

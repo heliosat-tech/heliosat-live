@@ -14,6 +14,7 @@
  */
 import { promises as fs } from 'fs';
 import path from 'path';
+import { writeJsonFileBestEffort } from '@/lib/fsCache';
 import { fetchAceOmniSamples } from './l1EarthData';
 import { r2, ridgeFit, rmse } from './mlModelService';
 
@@ -230,8 +231,7 @@ export async function runGoesImpactAnalysis(options?: { spacecraft?: string }): 
 }
 
 export async function saveGoesImpactResult(result: GoesImpactResult): Promise<void> {
-  await fs.mkdir(path.dirname(RESULT_PATH), { recursive: true });
-  await fs.writeFile(RESULT_PATH, JSON.stringify(result, null, 2), 'utf8');
+  await writeJsonFileBestEffort(RESULT_PATH, result, { pretty: true });
 }
 
 export async function loadGoesImpactResult(): Promise<GoesImpactResult | null> {

@@ -1,0 +1,29 @@
+name: Publish realtime forecast
+
+# Precompute → store (ROADMAP Fase 4). Hits the cron endpoint on Vercel on a schedule
+# so GET /api/v1/forecast/realtime always serves a fresh, PRECOMPUTED row (the API
+# itself never computes). GitHub's minimum cadence is ~5 min, which is plenty for a
+# nowcast with tens of minutes of lead time.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   HELIOSAT_BASE_URL  e.g. https://heliosat.vercel.app   (no trailing slash)
+#   CRON_SECRET        same value as the Vercel env var CRON_SECRET
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {} # allow manual runs for testing
+
+concurrency:
+  group: publish-forecast
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger forecast precompute
+        run: |
+          curl -fsS --retry 3 --retry-delay 5 -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.HELIOSAT_BASE_URL }}/api/cron/publish-forecast"

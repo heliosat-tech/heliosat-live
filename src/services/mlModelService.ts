@@ -13,6 +13,7 @@
  */
 import { promises as fs } from 'fs';
 import path from 'path';
+import { writeJsonFileBestEffort } from '@/lib/fsCache';
 import { resolveCoverageAnchoredRange } from './dataCoverageService';
 import { fetchAceOmniSamples, type L1EarthSample, type SolarWindVariableId } from './l1EarthData';
 import { NOMINAL_L1_DISTANCE_KM } from './mruForecastService';
@@ -398,8 +399,7 @@ export function predictAtTimes(
 // ---------------------------------------------------------------- persistence
 
 export async function saveMlModel(artifact: MlModelArtifact): Promise<void> {
-  await fs.mkdir(MODEL_DIR, { recursive: true });
-  await fs.writeFile(MODEL_PATH, JSON.stringify(artifact, null, 2), 'utf8');
+  await writeJsonFileBestEffort(MODEL_PATH, artifact, { pretty: true });
 }
 
 export async function loadMlModel(): Promise<MlModelArtifact | null> {

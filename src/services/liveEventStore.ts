@@ -7,6 +7,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { writeJsonFileBestEffort } from '@/lib/fsCache';
 import type { LiveEvent } from './liveEventService';
 
 const STORE_DIR = path.join(process.cwd(), 'data', 'live-events');
@@ -27,8 +28,7 @@ export async function loadStoredEvents(): Promise<LiveEvent[]> {
 }
 
 async function saveStoredEvents(events: LiveEvent[]): Promise<void> {
-  await fs.mkdir(STORE_DIR, { recursive: true });
-  await fs.writeFile(STORE_PATH, JSON.stringify(events, null, 2), 'utf8');
+  await writeJsonFileBestEffort(STORE_PATH, events, { pretty: true });
 }
 
 /**
@@ -47,9 +47,8 @@ export async function loadEventCatalog(): Promise<LiveEvent[]> {
 }
 
 export async function saveEventCatalog(events: LiveEvent[]): Promise<void> {
-  await fs.mkdir(STORE_DIR, { recursive: true });
   const sorted = events.slice().sort((a, b) => new Date(b.detectedAtL1Utc).getTime() - new Date(a.detectedAtL1Utc).getTime());
-  await fs.writeFile(CATALOG_PATH, JSON.stringify(sorted, null, 2), 'utf8');
+  await writeJsonFileBestEffort(CATALOG_PATH, sorted, { pretty: true });
 }
 
 /**

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getCurrentAdminState } from '@/lib/supabase/admin';
+import { writeJsonFileBestEffort } from '@/lib/fsCache';
 import { computeMruTimingStats, type MruTimingStats } from '@/services/mruTimingService';
 
 export const dynamic = 'force-dynamic';
@@ -40,7 +41,6 @@ export async function GET(request: Request) {
   if (!stats) {
     return NextResponse.json({ stats: null, error: 'Could not compute timing stats (OMNI fetch failed).' }, { status: 422, headers: { 'Cache-Control': 'no-store' } });
   }
-  await fs.mkdir(STORE_DIR, { recursive: true });
-  await fs.writeFile(STORE_PATH, JSON.stringify(stats, null, 2), 'utf8');
+  await writeJsonFileBestEffort(STORE_PATH, stats, { pretty: true });
   return NextResponse.json({ stats, cached: false }, { headers: { 'Cache-Control': 'no-store' } });
 }
