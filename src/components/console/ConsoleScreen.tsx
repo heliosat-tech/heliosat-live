@@ -1,8 +1,8 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, RefreshCw, Timer, Wind } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, Pause, Play, RefreshCw, Timer, Wind } from 'lucide-react';
 import { TrainingDataPanel } from './TrainingDataPanel';
 import { Brush, CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
@@ -71,9 +71,13 @@ interface SeriesDto {
   stale?: boolean;
   cacheAgeMs?: number;
 }
+// One solar-wind parcel currently in transit between L1 and Earth (already detected at
+// L1, not yet arrived), with its forecast G level — the input for the transit corridor.
+interface InboundDto { detectedMs: number; arrivalMs: number; gLevel: number; speedKmS: number | null }
 interface ConsoleResponse {
   generatedAtUtc: string;
   current: CurrentDto | null;
+  inbound: InboundDto[];
   scales: ScalesDto | null;
   cadence: ForecastCadence;
   forecasts: ForecastRowDto[];
@@ -188,6 +192,398 @@ function DangerHero({ current }: { current: CurrentDto }) {
         <Stat label="Est. Kp" value={fmtNum(d.estKp)} />
         <Stat label="Transit" value={current.lagMinutes !== null ? `${current.lagMinutes}` : '—'} unit="min" />
       </div>
+    </section>
+  );
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function fmtCompactKm(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(value) >= 10_000) return `${Math.round(value / 1000)}k`;
+  return Math.round(value).toLocaleString('en-US');
+}
+
+function fmtCountdown(ms: number) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+}
+
+interface InboundParcel { detectedMs: number; arrivalMs: number; gLevel: number; speedKmS: number | null }
+interface GForecastPoint { t: number; level: number }
+interface ReplaySeries { window: string; startMs: number; endMs: number; gForecast: GForecastPoint[] }
+
+/** Corridor view: live "now", or replay a past period (up to 1 month). */
+const CORRIDOR_WINDOWS: Array<{ key: string; label: string }> = [
+  { key: 'live', label: 'Live' },
+  { key: '24h', label: '24 h' },
+  { key: '7d', label: '7 d' },
+  { key: '30d', label: '30 d' },
+];
+const SPEEDS = [1, 2, 4] as const;
+const PLAY_BASE_MS = 28_000; // whole window plays in ~28 s at 1x
+const NO_DATA_FILL = '#334155';
+
+/** Even-stride downsample to keep gradient stop counts bounded. */
+function strideArray<T>(arr: T[], target: number): T[] {
+  if (arr.length <= target) return arr;
+  const step = arr.length / target;
+  const out: T[] = [];
+  for (let i = 0; i < arr.length; i += step) out.push(arr[Math.floor(i)]);
+  return out;
+}
+
+const fmtDay = (ms: number, timeZone: string) =>
+  new Date(ms).toLocaleDateString('en-US', { month: 'short', day: '2-digit', timeZone });
+
+/** In-transit parcels as ordered colour stops along the corridor (0 = at L1, 1 = at Earth). */
+function corridorStops(inbound: InboundParcel[], nowMs: number) {
+  return inbound
+    .map(p => {
+      const span = p.arrivalMs - p.detectedMs;
+      if (span <= 0) return null;
+      const f = (nowMs - p.detectedMs) / span;
+      if (f < 0 || f > 1) return null;
+      return { f, level: p.gLevel };
+    })
+    .filter((s): s is { f: number; level: number } => s !== null)
+    .sort((a, b) => a.f - b.f);
+}
+
+/** CSS gradient from ordered {f, level} stops (f in [0,1]; 0 = L1, 1 = Earth). */
+function buildCorridorGradient(stops: Array<{ f: number; level: number }>): string {
+  if (stops.length === 0) return dangerStyle(0).dot;
+  const parts = [`${dangerStyle(stops[0].level).dot} 0%`];
+  for (const s of stops) parts.push(`${dangerStyle(s.level).dot} ${(s.f * 100).toFixed(1)}%`);
+  parts.push(`${dangerStyle(stops[stops.length - 1].level).dot} 100%`);
+  return `linear-gradient(90deg, ${parts.join(', ')})`;
+}
+
+/**
+ * The L1→Earth corridor as a CONTINUOUS band coloured by the forecast G level of the wind
+ * in transit. In LIVE mode each in-transit parcel is a colour stop at its current position
+ * (0 = just detected at L1, 1 = arriving at Earth); a fresh disturbance appears at the L1
+ * edge and slides toward Earth over the next ~lag minutes. In REPLAY mode the same corridor
+ * is reconstructed for any past instant T from the forecast-G history (arrivals in
+ * [T, T+lag]), so the slider / play button shows how it evolved over a chosen period.
+ */
+function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inbound: InboundParcel[]; nowMs: number }) {
+  const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
+  const sampleMs = current.sampleTimeUtc ? new Date(current.sampleTimeUtc).getTime() : Number.NaN;
+  const arrivalMs = current.arrivalUtc ? new Date(current.arrivalUtc).getTime() : Number.NaN;
+  const hasTransit = Number.isFinite(sampleMs) && Number.isFinite(arrivalMs) && arrivalMs > sampleMs && current.speedKmS !== null;
+  const effectiveNow = nowMs > 0 ? nowMs : sampleMs;
+  const progress = hasTransit ? clamp01((effectiveNow - sampleMs) / (arrivalMs - sampleMs)) : 0;
+  const totalTransitMs = hasTransit ? arrivalMs - sampleMs : null;
+  const remainingMs = hasTransit ? Math.max(0, arrivalMs - effectiveNow) : null;
+  const remainingKm = hasTransit ? current.l1DistanceKm * (1 - progress) : null;
+  const elapsedKm = hasTransit ? current.l1DistanceKm * progress : null;
+  const lagMin = current.lagMinutes;
+  const lagMs = (current.lagMinutes ?? 50) * 60_000;
+
+  // ---- Replay state ----
+  const [windowKey, setWindowKey] = useState('live');
+  const [replay, setReplay] = useState<ReplaySeries | null>(null);
+  const [scrubT, setScrubT] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState<number>(1);
+  const replayCache = useRef<Map<string, ReplaySeries>>(new Map());
+  const playheadElRef = useRef<HTMLDivElement | null>(null);
+  const sliderRef = useRef<HTMLInputElement | null>(null);
+  const labelRef = useRef<HTMLSpanElement | null>(null);
+  const timeRef = useRef(0);
+  const isReplay = windowKey !== 'live';
+  const selectWindow = (key: string) => { setPlaying(false); setSpeed(1); setWindowKey(key); };
+  // Trust the loaded series only if it matches the current window (avoids a stale flash).
+  const activeReplay = isReplay && replay && replay.window === windowKey ? replay : null;
+  const replayLoading = isReplay && !activeReplay;
+  const span = activeReplay ? Math.max(1, activeReplay.endMs - activeReplay.startMs) : 1;
+
+  // Load the forecast-G history from the lightweight corridor endpoint. Cached per window in
+  // a ref, so re-selecting a window already downloaded is instant. Every setState runs inside
+  // the async callback, so the effect never sets state synchronously.
+  useEffect(() => {
+    if (windowKey === 'live') return;
+    let cancelled = false;
+    (async () => {
+      const cached = replayCache.current.get(windowKey);
+      if (cached) { if (!cancelled) { setReplay(cached); setScrubT(cached.endMs); } return; }
+      try {
+        const r = await fetch(`/api/console/corridor?window=${windowKey}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        if (!r.ok || cancelled) return;
+        const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[] };
+        if (cancelled) return;
+        const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t) };
+        replayCache.current.set(windowKey, series);
+        setReplay(series);
+        setScrubT(series.endMs);
+      } catch {
+        /* leave empty -> "no data" state */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [windowKey]);
+
+  // Static full-window G heatmap (time ascending, left → right). Built once per window.
+  const replayGradient = useMemo(() => {
+    if (!activeReplay || activeReplay.gForecast.length === 0) return NO_DATA_FILL;
+    const s = activeReplay.startMs;
+    const pts = activeReplay.gForecast.map(p => ({ x: clamp01((p.t - s) / span), level: p.level })).sort((a, b) => a.x - b.x);
+    const parts = strideArray(pts, 700).map(p => `${dangerStyle(p.level).dot} ${(p.x * 100).toFixed(2)}%`);
+    return `linear-gradient(90deg, ${parts.join(', ')})`;
+  }, [activeReplay, span]);
+
+  // Imperatively position the playhead marker + slider + time label. No React re-render per
+  // frame → the playback is a pure GPU transform and stays perfectly smooth.
+  const applyPlayhead = useCallback((T: number) => {
+    timeRef.current = T;
+    if (!activeReplay) return;
+    const f = clamp01((T - activeReplay.startMs) / span);
+    if (playheadElRef.current) playheadElRef.current.style.transform = `translateX(${(f * 100).toFixed(3)}%)`;
+    if (sliderRef.current && document.activeElement !== sliderRef.current) sliderRef.current.value = String(Math.round(T));
+    if (labelRef.current) labelRef.current.textContent = `${fmtDateTime(new Date(T).toISOString(), timeZone)} ${tzLabel}`;
+  }, [activeReplay, span, timeZone, tzLabel]);
+
+  // Position the playhead at the most recent time whenever a window finishes loading.
+  useEffect(() => {
+    if (activeReplay) applyPlayhead(activeReplay.endMs);
+  }, [activeReplay, applyPlayhead]);
+
+  // Smooth playback: advance the imperative playhead via requestAnimationFrame, looping.
+  useEffect(() => {
+    if (!playing || !activeReplay) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = now - last;
+      last = now;
+      let T = timeRef.current + span * (dt / PLAY_BASE_MS) * speed;
+      if (T >= activeReplay.endMs) T = activeReplay.startMs;
+      applyPlayhead(T);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, activeReplay, span, speed, applyPlayhead]);
+
+  const togglePlay = () => {
+    if (playing) { setScrubT(timeRef.current); setPlaying(false); }
+    else setPlaying(true);
+  };
+  const onScrub = (v: number) => { if (playing) setPlaying(false); setScrubT(v); applyPlayhead(v); };
+
+  // Strongest G in the corridor window at the paused/scrubbed time (drives the banner).
+  const replayPeak = useMemo(() => {
+    if (!activeReplay) return { level: 0, eta: Number.POSITIVE_INFINITY, hasData: false };
+    let level = 0;
+    let eta = Number.POSITIVE_INFINITY;
+    for (const p of activeReplay.gForecast) {
+      if (p.t < scrubT || p.t > scrubT + lagMs) continue;
+      if (p.level > level) { level = p.level; eta = p.t; }
+      else if (p.level === level && level > 0 && p.t < eta) eta = p.t;
+    }
+    return { level, eta, hasData: activeReplay.gForecast.length > 0 };
+  }, [activeReplay, scrubT, lagMs]);
+
+  // Live corridor (per-parcel gradient + peak), unchanged from the live view.
+  const liveCorridor = useMemo(() => {
+    const stops = corridorStops(inbound, effectiveNow);
+    let level = 0;
+    let eta = Number.POSITIVE_INFINITY;
+    for (const p of inbound) { if (p.arrivalMs <= effectiveNow) continue; if (p.gLevel > level) { level = p.gLevel; eta = p.arrivalMs; } else if (p.gLevel === level && level > 0 && p.arrivalMs < eta) eta = p.arrivalMs; }
+    return { gradient: buildCorridorGradient(stops), peak: { level, eta }, hasData: inbound.length > 0 };
+  }, [inbound, effectiveNow]);
+
+  const peak = isReplay ? replayPeak : liveCorridor.peak;
+  const hasData = isReplay ? replayPeak.hasData : liveCorridor.hasData;
+  const peakStyle = dangerStyle(peak.level);
+
+  const tile = (label: string, value: ReactNode, accent = false) => (
+    <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2">
+      <div className="font-mono text-[8px] uppercase tracking-widest text-slate-500">{label}</div>
+      <div className={`mt-0.5 font-mono text-xs sm:text-sm ${accent ? 'text-cyan-100' : 'text-slate-100'}`}>{value}</div>
+    </div>
+  );
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-cyan-400/20 bg-slate-950/40 p-4 shadow-2xl shadow-black/20">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Timer className="h-4 w-4 flex-shrink-0 text-cyan-300" aria-hidden="true" />
+          <div className="min-w-0">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-200">CME transit · L1 to Earth</h2>
+            <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-widest text-slate-500">Forecast G level along the L1 → Earth corridor</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2 font-mono text-[10px] uppercase tracking-widest">
+          {isReplay ? (
+            <span className="rounded border border-violet-400/30 bg-violet-400/10 px-2 py-1 text-violet-200">Replay · {windowKey}</span>
+          ) : (
+            <>
+              <GTag level={current.danger.level} code={current.danger.code} />
+              <span className="rounded border border-cyan-400/25 bg-cyan-400/10 px-2 py-1 text-cyan-100">{current.speedKmS !== null ? `${Math.round(current.speedKmS)} km/s` : 'speed —'}</span>
+              <span className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1 text-slate-400">{current.distanceIsMeasured ? 'measured L1' : 'nominal L1'}</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Live / replay selector + scrubber + play */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="inline-flex overflow-hidden rounded-md border border-slate-700/60">
+          {CORRIDOR_WINDOWS.map(w => (
+            <button key={w.key} type="button" onClick={() => selectWindow(w.key)}
+              className={`px-2 py-1 font-mono text-[9px] uppercase tracking-widest transition ${windowKey === w.key ? 'bg-cyan-400/15 text-cyan-100' : 'text-slate-400 hover:text-slate-200'}`}>
+              {w.label}
+            </button>
+          ))}
+        </div>
+        {isReplay && (
+          <div className="flex min-w-[260px] flex-1 items-center gap-2">
+            <button type="button" onClick={togglePlay} disabled={!activeReplay}
+              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-400/30 bg-cyan-400/10 text-cyan-100 transition hover:border-cyan-300/60 disabled:opacity-40"
+              title={playing ? 'Pause' : 'Play'} aria-label={playing ? 'Pause' : 'Play'}>
+              {playing ? <Pause className="h-3.5 w-3.5" aria-hidden="true" /> : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
+            </button>
+            <input ref={sliderRef} type="range" aria-label="Replay time"
+              min={activeReplay?.startMs ?? 0} max={activeReplay?.endMs ?? 1}
+              step={Math.max(1, Math.round(((activeReplay?.endMs ?? 1) - (activeReplay?.startMs ?? 0)) / 2000))}
+              defaultValue={activeReplay?.endMs ?? 0} disabled={!activeReplay}
+              onInput={e => onScrub(Number(e.currentTarget.value))}
+              className="h-1.5 flex-1 cursor-pointer accent-cyan-400 disabled:opacity-40" />
+            <span ref={labelRef} className="w-[116px] whitespace-nowrap text-right font-mono text-[9px] tabular-nums text-slate-300">
+              {activeReplay ? `${fmtDateTime(new Date(scrubT).toISOString(), timeZone)} ${tzLabel}` : replayLoading ? 'loading…' : '—'}
+            </span>
+            <div className="inline-flex flex-shrink-0 overflow-hidden rounded-md border border-slate-700/60">
+              {SPEEDS.map(s => (
+                <button key={s} type="button" onClick={() => setSpeed(s)} disabled={!activeReplay}
+                  className={`px-1.5 py-1 font-mono text-[9px] tracking-widest transition disabled:opacity-40 ${speed === s ? 'bg-cyan-400/15 text-cyan-100' : 'text-slate-400 hover:text-slate-200'}`}>
+                  {s}×
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {isReplay && playing ? (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-cyan-100">
+          <Play className="h-3 w-3" aria-hidden="true" /> Playing · {speed}× — drag the slider to inspect a moment
+        </div>
+      ) : hasData && peak.level > 0 && Number.isFinite(peak.eta) ? (
+        <div className={`mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest ${peakStyle.chip}`}>
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: peakStyle.dot }} />
+          G{peak.level} {peakStyle.word.toLowerCase()} {isReplay ? 'at marker' : 'inbound'}
+          {isReplay ? (
+            <span className="text-slate-400">· arrives {fmtClock(new Date(peak.eta).toISOString(), timeZone)} {tzLabel}</span>
+          ) : (
+            <span className="text-slate-400">· reaches Earth in {fmtCountdown(peak.eta - effectiveNow)} ({fmtClock(new Date(peak.eta).toISOString(), timeZone)} {tzLabel})</span>
+          )}
+        </div>
+      ) : hasData ? (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-400/30 bg-emerald-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-emerald-200">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: dangerStyle(0).dot }} />
+          Quiet — only G0 wind {isReplay ? 'at the marker' : 'in transit'}
+        </div>
+      ) : (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: NO_DATA_FILL }} />
+          {replayLoading ? 'Loading forecast history…' : 'No forecast data at this time'}
+        </div>
+      )}
+
+      <div className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-widest text-slate-500">
+        {isReplay ? (
+          <>
+            <span>{activeReplay ? fmtDay(activeReplay.startMs, timeZone) : '—'}</span>
+            <span className="hidden text-slate-600 sm:inline">forecast G timeline · {windowKey}</span>
+            <span>{activeReplay ? `${fmtDay(activeReplay.endMs, timeZone)} · now` : 'now'}</span>
+          </>
+        ) : (
+          <>
+            <span>L1 · DSCOVR</span>
+            <span className="hidden text-slate-600 sm:inline">detected → in transit → arriving</span>
+            <span>Earth</span>
+          </>
+        )}
+      </div>
+      <div
+        className="relative h-16 w-full overflow-hidden rounded-lg border border-slate-700/70 shadow-inner sm:h-20"
+        style={{ background: isReplay ? replayGradient : liveCorridor.gradient }}
+        aria-label={isReplay ? `Forecast G timeline for the last ${windowKey}.` : `L1 to Earth corridor coloured by forecast storm level. ${liveCorridor.peak.level > 0 ? `G${liveCorridor.peak.level} present.` : 'Quiet.'}`}
+      >
+        <div className="pointer-events-none absolute inset-0 opacity-25 mix-blend-overlay" style={{ backgroundImage: 'repeating-linear-gradient(90deg, rgba(255,255,255,0.14) 0 1px, transparent 1px 24px)' }} />
+        {isReplay ? (
+          <div ref={playheadElRef} className="pointer-events-none absolute inset-y-0 left-0 w-full will-change-transform">
+            <div className="absolute inset-y-0 left-0 w-0.5 bg-white shadow-[0_0_10px_rgba(255,255,255,0.95)]" />
+          </div>
+        ) : (
+          <>
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-20 bg-gradient-to-r from-black/40 to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-black/50 to-transparent" />
+            <div className="absolute left-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-white/40 bg-slate-950/70 text-[8px] font-semibold text-cyan-50">L1</div>
+            <div className="absolute right-2 top-1/2 h-6 w-6 -translate-y-1/2 rounded-full border border-white/50 bg-[radial-gradient(circle_at_32%_30%,#f8fafc_0%,#60a5fa_22%,#1d4ed8_60%,#0b1220_85%)] shadow-[0_0_18px_rgba(56,189,248,0.4)]" />
+            <div className="absolute right-[11px] top-0 h-full w-px bg-white/70 animate-pulse" />
+          </>
+        )}
+      </div>
+      {!isReplay && (
+        <div className="mt-1 flex justify-between font-mono text-[8px] uppercase tracking-widest text-slate-600">
+          <span>{lagMin !== null ? `detected (+${lagMin}m)` : 'detected'}</span>
+          <span>{lagMin !== null ? `+${Math.round(lagMin / 2)}m` : 'in transit'}</span>
+          <span className="text-slate-400">arriving now</span>
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[8px] uppercase tracking-widest text-slate-500">
+        <span className="text-slate-600">G scale</span>
+        {DANGER.map((d, i) => (
+          <span key={i} className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: d.dot }} />G{i}
+          </span>
+        ))}
+      </div>
+
+      {isReplay ? (
+        <div className="mt-3 rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-[10px] text-slate-400">
+          {activeReplay
+            ? <>Forecast G heatmap for the last <span className="text-slate-200">{windowKey}</span> ({fmtDateTime(new Date(activeReplay.startMs).toISOString(), timeZone)} → {fmtDateTime(new Date(activeReplay.endMs).toISOString(), timeZone)} {tzLabel}). Scrub or press play; the white marker is the selected time.</>
+            : (replayLoading ? 'Loading forecast history…' : 'No forecast history available for this window.')}
+        </div>
+      ) : (
+        <>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {tile('Detected at L1', <>{current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>)}
+            {tile('Earth ETA', <>{current.arrivalUtc ? fmtClock(current.arrivalUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>, true)}
+            {tile('Countdown', remainingMs !== null ? fmtCountdown(remainingMs) : '—')}
+            {tile('Distance left', <>{fmtCompactKm(remainingKm)} <span className="text-[8px] text-slate-500">km</span></>)}
+          </div>
+          <div className="mt-2 grid gap-2 text-[10px] sm:grid-cols-3">
+            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
+              <span className="uppercase tracking-widest text-slate-600">Travelled</span>
+              <span className="ml-2 text-slate-200">{fmtCompactKm(elapsedKm)} km</span>
+            </div>
+            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
+              <span className="uppercase tracking-widest text-slate-600">Total L1 path</span>
+              <span className="ml-2 text-slate-200">{fmtCompactKm(current.l1DistanceKm)} km</span>
+            </div>
+            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
+              <span className="uppercase tracking-widest text-slate-600">Transit model</span>
+              <span className="ml-2 text-slate-200">MRU {totalTransitMs !== null ? fmtCountdown(totalTransitMs) : '—'}</span>
+            </div>
+          </div>
+          {!hasTransit && (
+            <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Need a valid L1 speed and Earth-arrival estimate to project the corridor.</p>
+          )}
+        </>
+      )}
     </section>
   );
 }
@@ -816,6 +1212,161 @@ const ARRIVAL_ACTUAL_COLOR = '#fb923c'; // observed at Earth (OMNI)
 const ARRIVAL_PRED_COLOR = '#38bdf8'; // MRU prediction
 
 function fmtSignedMin(m: number) { return `${m >= 0 ? '+' : '−'}${Math.abs(m).toFixed(1)}`; }
+
+interface ValidationArchiveInfo {
+  rows: number;
+  startUtc: string | null;
+  endUtc: string | null;
+  updatedAtUtc: string | null;
+  resolution: string;
+  role: string;
+  variables: string[];
+  source: string;
+}
+interface ValidationDataDto {
+  generatedAtUtc: string;
+  archives: {
+    ace: ValidationArchiveInfo;
+    omni: ValidationArchiveInfo;
+    geo: ValidationArchiveInfo;
+  };
+  studies: {
+    arrivalTiming: {
+      source: string;
+      interval: { startUtc: string; stopUtc: string; label: string } | null;
+      statsSpan: { startUtc: string; stopUtc: string; multiYear: boolean } | null;
+      samples: number | null;
+      role: string;
+      metrics: string[];
+    };
+    timingDistribution: { coverage: { startUtc: string; stopUtc: string } | null; samples: number | null; role: string; metrics: string[] };
+    variableAlignment: { role: string; metrics: string[] };
+    gProxy: { role: string; metrics: string[]; caveat: string };
+  };
+}
+
+function fmtDateOnly(iso: string | null) {
+  if (!iso) return 'missing';
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return 'missing';
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function ArchiveTile({ title, archive, accent }: { title: string; archive: ValidationArchiveInfo; accent: string }) {
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-950/45 p-3">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h3 className="font-mono text-[10px] font-semibold uppercase tracking-widest text-slate-300">{title}</h3>
+        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: accent }} />
+      </div>
+      <div className="font-mono text-[10px] text-slate-500">{archive.resolution} · {archive.rows.toLocaleString()} rows</div>
+      <div className="mt-1 font-mono text-[10px] text-slate-300">{fmtDateOnly(archive.startUtc)} → {fmtDateOnly(archive.endUtc)}</div>
+      <div className="mt-2 text-[10px] leading-relaxed text-slate-500">{archive.role}</div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {archive.variables.map(v => <span key={v} className="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-slate-400">{v}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function ValidationDataUsedPanel() {
+  const [data, setData] = useState<ValidationDataDto | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/console/validation-data', { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      const b = await r.json() as ValidationDataDto | { error?: string };
+      if (r.ok) { setData(b as ValidationDataDto); setError(null); } else { setError((b as { error?: string }).error ?? 'Could not read validation data.'); }
+    } catch {
+      setError('Could not read validation data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { const t = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(t); }, [load]);
+
+  const studies = data?.studies;
+  return (
+    <section className="rounded-lg border border-slate-800 bg-slate-950/30 p-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Database className="h-4 w-4 text-cyan-300" aria-hidden="true" />
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-300">Data used · validation & studies</h2>
+        </div>
+        {data && <span className="font-mono text-[10px] text-slate-500">snapshot {fmtDateTime(data.generatedAtUtc, 'UTC')} UTC</span>}
+      </div>
+      <p className="mb-3 max-w-4xl text-[11px] leading-relaxed text-slate-500">
+        Validation uses different datasets for different jobs: ACE is the historical upstream L1 input, OMNI is the near-Earth/time-shifted truth,
+        GOES/GEO is response context, and Kp/G is only a response proxy label. None of these turns GOES or Kp into a direct L1 solar-wind measurement.
+      </p>
+
+      {loading && !data ? (
+        <div className="flex h-24 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Reading validation inventory…</div>
+      ) : error ? (
+        <div className="flex h-20 items-center justify-center px-4 text-center font-mono text-[10px] uppercase tracking-widest text-amber-200/70">{error}</div>
+      ) : data ? (
+        <div className="flex flex-col gap-3">
+          <div className="grid gap-2 lg:grid-cols-3">
+            <ArchiveTile title="ACE upstream L1" archive={data.archives.ace} accent="#22d3ee" />
+            <ArchiveTile title="OMNI near-Earth truth" archive={data.archives.omni} accent="#fb923c" />
+            <ArchiveTile title="GOES/GEO context" archive={data.archives.geo} accent="#a78bfa" />
+          </div>
+          <div className="overflow-hidden rounded-md border border-slate-800">
+            <table className="w-full border-collapse text-[10px]">
+              <thead>
+                <tr className="bg-slate-950/60 font-mono uppercase tracking-widest text-slate-500">
+                  <th className="px-2 py-1.5 text-left font-medium">Study</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Data role</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Local coverage</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Metrics</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-2 py-1.5 font-mono text-cyan-200">Arrival-time validation</td>
+                  <td className="px-2 py-1.5 text-slate-400">{studies?.arrivalTiming.role}</td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500">
+                    {studies?.arrivalTiming.statsSpan ? `${fmtDateOnly(studies.arrivalTiming.statsSpan.startUtc)} → ${fmtDateOnly(studies.arrivalTiming.statsSpan.stopUtc)}` : 'cache missing'}
+                    {studies?.arrivalTiming.samples ? ` · ${studies.arrivalTiming.samples.toLocaleString()} samples` : ''}
+                  </td>
+                  <td className="px-2 py-1.5 text-slate-500">{studies?.arrivalTiming.metrics.join(', ')}</td>
+                </tr>
+                <tr className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-2 py-1.5 font-mono text-cyan-200">Variable alignment</td>
+                  <td className="px-2 py-1.5 text-slate-400">{studies?.variableAlignment.role}</td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500">{fmtDateOnly(data.archives.ace.startUtc)} → {fmtDateOnly(data.archives.ace.endUtc)} vs {fmtDateOnly(data.archives.omni.startUtc)} → {fmtDateOnly(data.archives.omni.endUtc)}</td>
+                  <td className="px-2 py-1.5 text-slate-500">{studies?.variableAlignment.metrics.join(', ')}</td>
+                </tr>
+                <tr className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-2 py-1.5 font-mono text-cyan-200">Event validation</td>
+                  <td className="px-2 py-1.5 text-slate-400">Uses propagated L1 event candidates; reference windows are still being formalized.</td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500">Not yet a scored production panel</td>
+                  <td className="px-2 py-1.5 text-slate-500">planned: precision, recall, onset error, duration error, peak error</td>
+                </tr>
+                <tr className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-2 py-1.5 font-mono text-cyan-200">G-level proxy validation</td>
+                  <td className="px-2 py-1.5 text-slate-400">{studies?.gProxy.role}</td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500">{fmtDateOnly(data.archives.omni.startUtc)} → {fmtDateOnly(data.archives.omni.endUtc)}</td>
+                  <td className="px-2 py-1.5 text-slate-500">{studies?.gProxy.metrics.join(', ')}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="flex gap-2 rounded-md border border-cyan-400/20 bg-cyan-400/[0.04] p-3 text-[10px] leading-relaxed text-slate-400">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden="true" />
+            <p>
+              Key limitation: OMNI is the historical near-Earth/time-shifted truth for solar-wind variables; Kp/G is a ground response index; GOES/GEO
+              describes spacecraft-environment response context. They validate different parts of the chain and should not be mixed as the same target.
+            </p>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
 
 function ArrivalAccuracyCard() {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
@@ -1650,7 +2201,8 @@ export function ConsoleScreen() {
           {/* Main body */}
           <div className="flex min-w-0 flex-1 flex-col gap-4">
             {view === 'training' ? <TrainingDataPanel /> : view === 'validation' ? (<>
-            {/* Validation studies: arrival-time accuracy + historical hindcast */}
+            {/* Validation studies: data inventory + arrival-time accuracy + historical hindcast */}
+            <ValidationDataUsedPanel />
             <ArrivalAccuracyCard />
             <BacktestPanel />
             </>) : (<>
@@ -1659,6 +2211,8 @@ export function ConsoleScreen() {
                 No live L1 solar-wind sample available
               </div>
             )}
+
+            {data?.current && <CmeTransitScene current={data.current} inbound={data.inbound ?? []} nowMs={nowMs} />}
 
             {/* Real-time nowcast: last ~2.5 h L1 + the inbound MRU forecast past now */}
             <NowcastPanel />

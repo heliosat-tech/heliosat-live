@@ -99,6 +99,40 @@ export async function GET(request: Request) {
     };
   }
 
+  // Inbound corridor: every recent L1 sample propagated to Earth that has NOT yet
+  // arrived — i.e. the solar wind currently in transit between L1 and Earth. Each carries
+  // a per-sample G estimate (lightly smoothed to kill 1-min spikes) so the UI can paint
+  // the L1→Earth corridor as a CONTINUOUS band whose colour shows what is inbound. This is
+  // independent of the forecast-log cadence (which only thins the table below).
+  const INBOUND_LOOKBACK_MS = 150 * 60 * 1000; // generous: covers the slowest transit
+  const INBOUND_SMOOTH_MS = 10 * 60 * 1000;
+  const inbound: Array<{ detectedMs: number; arrivalMs: number; gLevel: number; speedKmS: number | null }> = [];
+  for (let i = 0; i < samples.length; i += 1) {
+    const s = samples[i];
+    if (latest && latest.ms - s.ms > INBOUND_LOOKBACK_MS) continue;
+    const prop = propagateL1Sample(
+      { timeUtc: new Date(s.ms).toISOString(), speedKmS: s.speedKmS, densityPerCm3: s.densityPerCm3, bzNt: s.bzNt, btNt: s.btNt, temperatureK: null },
+      history.distanceKm,
+    );
+    if (!prop) continue;
+    const arrivalMs = new Date(prop.arrivalTimeUtc).getTime();
+    if (!Number.isFinite(arrivalMs) || arrivalMs <= nowMs) continue; // already arrived
+    let emSum = 0;
+    let emN = 0;
+    let spSum = 0;
+    let spN = 0;
+    for (let j = i; j >= 0 && s.ms - samples[j].ms <= INBOUND_SMOOTH_MS; j -= 1) {
+      emSum += mergingFieldMvM(samples[j].speedKmS, samples[j].bzNt);
+      emN += 1;
+      if (typeof samples[j].speedKmS === 'number') {
+        spSum += samples[j].speedKmS as number;
+        spN += 1;
+      }
+    }
+    const g = classifyGFromKp(kpFromCoupling(emN > 0 ? emSum / emN : 0, spN > 0 ? spSum / spN : null));
+    inbound.push({ detectedMs: s.ms, arrivalMs, gLevel: g.level, speedKmS: s.speedKmS });
+  }
+
   // Continuous forecast log: every L1 sample → an MRU forecast, verified vs real Kp,
   // thinned to the requested cadence.
   const log = buildForecastLog(history, kpSeries, cadence);
@@ -107,6 +141,7 @@ export async function GET(request: Request) {
     {
       generatedAtUtc: new Date(nowMs).toISOString(),
       current,
+      inbound,
       scales: scales.observed,
       cadence: log.cadence,
       forecasts: log.rows,

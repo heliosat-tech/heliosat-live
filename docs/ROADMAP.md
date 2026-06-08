@@ -44,7 +44,7 @@ Ordenado por fases; cada una se apoya en la anterior.
 ## Fase 3 — Cimientos de la API para clientes 🔑 (~1-2 días)
 **Objetivo:** superficie pública, versionada y autenticada por API key, **separada** de las rutas internas.
 
-- [X] **Contrato JSON v1** definido en `src/lib/api/forecastContract.ts` (`ForecastRealtimeV1`) y documentado en `docs/api-v1.md`: `observed` (velocidad, Bz, densidad, nivel G), `arrival` (ETA + lag de tránsito), `inbound_peak`, `issued_at`/`observed_at`. *(Es **v1 draft**: revisarlo antes de entregar la primera key — al integrarse un cliente queda congelado, solo cambios aditivos.)*
+- [X] **Contrato JSON v1** definido en `src/lib/api/forecastContract.ts` (`ForecastRealtimeV1`) y documentado en `docs/api-v1.md`: forecast físico L1 -> near-Earth/bow shock (`propagated_variables`, `derived_features`, ETA, incertidumbre, calidad y confianza), más campos legacy `observed`/`arrival`/`inbound_peak`. El nivel G se mantiene como proxy operativo, no como variable física primaria. *(Es **v1 draft**: revisarlo antes de entregar la primera key — al integrarse un cliente queda congelado, solo cambios aditivos.)*
 - [X] **Tabla `api_keys` en Supabase** (`supabase/api-keys.sql`): clave **hasheada** (SHA-256, nunca en claro), `company`, `is_active`, `rate_limit_per_min`, `expires_at`, `request_count`/`last_used_at`. RLS ON sin políticas → solo accesible por service-role.
 - [X] **Auth por API key** (`src/lib/api/apiKeyAuth.ts`): parsea `Authorization: Bearer <key>`, la hashea y la valida vía la función SQL `consume_api_key` (atómica: valida + consume cuota). Independiente del gate de admin por cookie. Usa un **cliente service-role** server-only (`src/lib/supabase/service.ts`).
 - [X] **Ruta `/api/v1/forecast/realtime`** (`src/app/api/v1/forecast/realtime/route.ts`): pública, protegida por API key, **lee** la fila precalculada de Supabase (no computa en vivo). 401/429/503 con headers `WWW-Authenticate`/`Retry-After`/`X-RateLimit-*`.
@@ -67,7 +67,7 @@ Ordenado por fases; cada una se apoya en la anterior.
 Patrón: **precalcular → guardar → servir**
 
 ```
-CRON (cada ~1 min)  ──▶  calcula nowcast (NOAA L1 → MRU → nivel G)
+CRON (cada ~1 min)  ──▶  calcula nowcast físico (NOAA L1 → MRU → near-Earth)
                           │ escribe "último forecast"
                           ▼
                     Supabase (fila 'latest')

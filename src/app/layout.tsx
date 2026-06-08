@@ -29,7 +29,7 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${robotoMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col m-0 p-0 bg-[#020617]">{children}</body>
+      <body suppressHydrationWarning className="min-h-full flex flex-col m-0 p-0 bg-[#020617]">{children}</body>
     </html>
   );
 }

@@ -1,0 +1,418 @@
+% HELIOSAT API --- Client Manual
+% Build: pdflatex heliosat-api-manual.tex   (run twice for the table of contents)
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage[table]{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{fancyhdr}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+% ---------------------------------------------------------------- brand
+\definecolor{heliosorange}{HTML}{E8731A}
+\definecolor{heliosnavy}{HTML}{1B2A4A}
+\definecolor{codebg}{HTML}{F6F8FA}
+\definecolor{codeframe}{HTML}{D0D7DE}
+\definecolor{kw}{HTML}{1B6FB3}
+\definecolor{str}{HTML}{0A7B34}
+\definecolor{cmt}{HTML}{6A737D}
+\definecolor{tablehead}{HTML}{EEF2F7}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=heliosnavy,
+  urlcolor=heliosorange,
+  pdftitle={HELIOSAT API - Client Manual},
+  pdfauthor={HELIOSAT},
+}
+
+\titleformat{\section}{\Large\bfseries\color{heliosnavy}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{heliosnavy}}{\thesubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textsc{\color{heliosnavy}HELIOSAT API}}
+\fancyhead[R]{\small Real-Time Forecast \textperiodcentered\ v1}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---------------------------------------------------------------- code styles
+\lstdefinelanguage{json}{
+  morestring=[b]",
+  showstringspaces=false,
+}
+\lstdefinelanguage{myjs}{
+  morekeywords={const,let,var,function,return,await,async,new,throw,if,else,for,of,true,false,null},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+  morestring=[b]',
+  morestring=[b]`,
+}
+\lstdefinestyle{base}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  frame=single,
+  rulecolor=\color{codeframe},
+  framesep=6pt,
+  xleftmargin=10pt,
+  xrightmargin=4pt,
+  showstringspaces=false,
+  keywordstyle=\color{kw}\bfseries,
+  stringstyle=\color{str},
+  commentstyle=\color{cmt}\itshape,
+  literate={á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1,
+  postbreak=\mbox{\textcolor{codeframe}{$\hookrightarrow$}\space},
+}
+\lstdefinestyle{bash}{style=base,language=bash}
+\lstdefinestyle{python}{style=base,language=Python}
+\lstdefinestyle{js}{style=base,language=myjs}
+\lstdefinestyle{json}{style=base,language=json}
+
+% inline code helper (escape underscores in usage: \tc{speed\_km\_s})
+\newcommand{\tc}[1]{\texttt{#1}}
+\newcommand{\baseurl}{https://heliosat-live.vercel.app}
+
+% ================================================================
+\begin{document}
+
+% ---------------------------------------------------------------- title page
+\begin{titlepage}
+\thispagestyle{empty}
+\vspace*{2cm}
+\noindent{\color{heliosorange}\rule{\textwidth}{2pt}}\\[1.2cm]
+{\fontsize{34}{40}\selectfont\bfseries\color{heliosnavy}HELIOSAT API}\\[0.4cm]
+{\LARGE\color{heliosnavy}Real-Time Space-Weather Forecast}\\[0.3cm]
+{\large Client Integration Manual}\\[1.0cm]
+{\large\textbf{API version:} v1 \qquad \textbf{Document:} \today}\\[0.6cm]
+\noindent{\color{heliosorange}\rule{\textwidth}{2pt}}
+\vfill
+\noindent\textbf{Base URL:}\ \url{\baseurl}\\
+\textbf{Authentication:}\ API key (HTTP \tc{Authorization: Bearer})\\
+\textbf{Support:}\ \href{mailto:contact@heliosat.co}{contact@heliosat.co}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ---------------------------------------------------------------- intro
+\section{Overview}
+
+The HELIOSAT API delivers a \textbf{real-time space-weather nowcast} as a single,
+versioned JSON resource. It reports the solar wind currently measured at the L1
+Lagrange point, propagated to its estimated Earth arrival, together with the
+resulting geomagnetic activity level.
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{One endpoint, one job.} \tc{GET /api/v1/forecast/realtime} returns the
+        latest forecast. No heavy queries, no parameters required.
+  \item \textbf{Always fresh.} The forecast is precomputed server-side and refreshed
+        roughly every 5 minutes, so every request reads a ready value and responds in
+        tens of milliseconds.
+  \item \textbf{Stable contract.} Within \tc{v1}, the response shape only ever grows
+        (new fields); existing fields are never removed or changed.
+\end{itemize}
+
+\subsection{Key concepts}
+\begin{description}[leftmargin=0pt,style=nextline]
+  \item[L1] The Sun--Earth Lagrange point (\(\sim\)1.5 million km sunward of Earth)
+        where solar-wind monitors sit. Conditions seen at L1 reach Earth tens of
+        minutes later.
+  \item[Bz (nT)] North--south component of the interplanetary magnetic field.
+        \emph{Negative (southward) Bz} couples energy into Earth's magnetosphere and
+        drives geomagnetic storms.
+  \item[G-scale] NOAA's geomagnetic storm scale, \(0\) (quiet) to \(5\) (extreme).
+  \item[Inbound parcel] Solar wind already past L1 but not yet at Earth --- i.e. weather
+        that \emph{will} arrive within the lead time.
+\end{description}
+
+% ---------------------------------------------------------------- quickstart
+\section{Quick start}
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Obtain your API key from HELIOSAT (see \S\ref{sec:auth}).
+  \item Make one authenticated request:
+\end{enumerate}
+
+\begin{lstlisting}[style=bash]
+curl -H "Authorization: Bearer hsk_live_xxxxxxxxxxxxxxxx" \
+     https://heliosat-live.vercel.app/api/v1/forecast/realtime
+\end{lstlisting}
+
+A \tc{200 OK} returns the JSON described in \S\ref{sec:schema}.
+
+% ---------------------------------------------------------------- auth
+\section{Authentication}\label{sec:auth}
+
+Every request must include your API key as a bearer token:
+
+\begin{lstlisting}[style=bash]
+Authorization: Bearer <your_api_key>
+\end{lstlisting}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Keys look like \tc{hsk\_live\_$\ldots$} and are issued per client/environment.
+  \item Treat the key as a secret: send it only from your backend, never embed it in a
+        browser, mobile app, or public repository.
+  \item HELIOSAT stores only a one-way hash of your key; it cannot be recovered. If a
+        key is lost or leaked, request a new one and the old one is revoked.
+  \item A missing or invalid key returns \tc{401} (see \S\ref{sec:errors}).
+\end{itemize}
+
+% ---------------------------------------------------------------- endpoints
+\section{Endpoints}
+
+\subsection{Real-time forecast}
+\begin{quote}\tc{GET \baseurl/api/v1/forecast/realtime}\end{quote}
+Returns the latest precomputed forecast. Requires authentication. Responses are not
+cached (\tc{Cache-Control: no-store}); poll as often as your rate limit allows
+(refreshes land about every 5 minutes, so polling faster rarely yields new data).
+
+\subsection{Service status}
+\begin{quote}\tc{GET \baseurl/api/v1/status}\end{quote}
+A lightweight, \emph{unauthenticated} health check. Returns \tc{200} when a fresh
+forecast is available and \tc{503} when the data is stale or unavailable --- convenient
+for an uptime monitor.
+
+\begin{lstlisting}[style=json]
+{
+  "status": "ok",
+  "schema_version": "1",
+  "issued_at": "2026-06-07T23:28:29.531Z",
+  "forecast_age_seconds": 60,
+  "stale": false
+}
+\end{lstlisting}
+
+% ---------------------------------------------------------------- schema
+\section{Response schema (v1)}\label{sec:schema}
+
+\textbf{Units \& conventions.} Speed in km\,s$^{-1}$; magnetic field in nT; density in
+particles\,cm$^{-3}$; all timestamps are ISO-8601 in UTC. Any of \tc{observed},
+\tc{arrival}, and \tc{inbound\_peak} may be \tc{null} when the corresponding data is
+unavailable. \textbf{Clients must ignore unknown fields.}
+
+\subsection{Example response}
+\begin{lstlisting}[style=json]
+{
+  "schema_version": "1",
+  "issued_at": "2026-06-07T23:28:29.531Z",
+  "observed_at": "2026-06-07T23:25:00.000Z",
+  "l1_distance_km": 1590297.74,
+  "observed": {
+    "speed_km_s": 521.3,
+    "bz_nt": 3.69,
+    "density_p_cm3": 1.66,
+    "g_level": 0
+  },
+  "arrival": {
+    "estimated_utc": "2026-06-08T00:15:50.638Z",
+    "transit_lag_minutes": 51
+  },
+  "inbound_peak": {
+    "g_level": 0,
+    "speed_km_s": 560,
+    "min_bz_nt": 3,
+    "eta_utc": "2026-06-07T23:28:46.951Z",
+    "lead_minutes": 47
+  }
+}
+\end{lstlisting}
+
+\subsection{Top-level fields}
+\renewcommand{\arraystretch}{1.3}
+\rowcolors{2}{white}{codebg}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\rowcolor{tablehead}\textbf{Field} & \textbf{Type} & \textbf{Description}\\
+\midrule
+\tc{schema\_version} & string & Contract version of this payload. Currently \tc{"1"}.\\
+\tc{issued\_at} & string & When this forecast was published (the precompute run time).\\
+\tc{observed\_at} & string \textbar\ null & Timestamp of the latest L1 measurement used.\\
+\tc{l1\_distance\_km} & number & L1 distance (km) used to propagate the wind to Earth.\\
+\tc{observed} & object \textbar\ null & Latest measured solar-wind conditions (Table 2).\\
+\tc{arrival} & object \textbar\ null & Earth-arrival estimate for the latest parcel (Table 3).\\
+\tc{inbound\_peak} & object \textbar\ null & Worst parcel still inbound, or null (Table 4).\\
+\bottomrule
+\end{tabularx}
+\begin{center}\small Table 1: Top-level response object.\end{center}
+
+\subsection{\tc{observed} object}
+\rowcolors{2}{white}{codebg}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\rowcolor{tablehead}\textbf{Field} & \textbf{Type} & \textbf{Description}\\
+\midrule
+\tc{speed\_km\_s} & number \textbar\ null & Solar-wind bulk speed (km\,s$^{-1}$).\\
+\tc{bz\_nt} & number \textbar\ null & IMF Bz, GSM (nT). Negative = southward = geoeffective.\\
+\tc{density\_p\_cm3} & number \textbar\ null & Proton density (particles\,cm$^{-3}$).\\
+\tc{g\_level} & integer & NOAA G-scale right now (0--5).\\
+\bottomrule
+\end{tabularx}
+\begin{center}\small Table 2: \tc{observed} --- current conditions at L1.\end{center}
+
+\subsection{\tc{arrival} object}
+\rowcolors{2}{white}{codebg}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\rowcolor{tablehead}\textbf{Field} & \textbf{Type} & \textbf{Description}\\
+\midrule
+\tc{estimated\_utc} & string \textbar\ null & Estimated Earth-arrival time of the latest parcel.\\
+\tc{transit\_lag\_minutes} & number \textbar\ null & L1\,$\rightarrow$\,Earth travel time (minutes).\\
+\bottomrule
+\end{tabularx}
+\begin{center}\small Table 3: \tc{arrival} --- when the latest measured parcel reaches Earth.\end{center}
+
+\subsection{\tc{inbound\_peak} object}
+\rowcolors{2}{white}{codebg}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\rowcolor{tablehead}\textbf{Field} & \textbf{Type} & \textbf{Description}\\
+\midrule
+\tc{g\_level} & integer & Peak NOAA G-scale among the inbound parcels.\\
+\tc{speed\_km\_s} & number & Peak speed among the inbound parcels (km\,s$^{-1}$).\\
+\tc{min\_bz\_nt} & number & Most negative Bz among the inbound parcels (nT).\\
+\tc{eta\_utc} & string & Estimated Earth-arrival of the worst inbound parcel.\\
+\tc{lead\_minutes} & integer & Minutes from issue time until the inbound window arrives.\\
+\bottomrule
+\end{tabularx}
+\begin{center}\small Table 4: \tc{inbound\_peak} --- strongest weather still in transit.\end{center}
+
+% ---------------------------------------------------------------- errors
+\section{Status \& error codes}\label{sec:errors}
+
+\rowcolors{2}{white}{codebg}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\rowcolor{tablehead}\textbf{HTTP} & \textbf{Meaning} & \textbf{Notes}\\
+\midrule
+\tc{200} & OK & Forecast (or status) returned.\\
+\tc{401} & Unauthorized & Missing, invalid, inactive, or expired API key. Header \tc{WWW-Authenticate: Bearer}.\\
+\tc{429} & Too Many Requests & Rate limit exceeded. See \tc{Retry-After}.\\
+\tc{503} & Service Unavailable & No forecast available yet, or temporarily unconfigured. Retry shortly.\\
+\bottomrule
+\end{tabularx}
+\begin{center}\small Table 5: Response codes.\end{center}
+
+Error bodies are JSON: \tc{\{ "error": "human-readable message" \}}.
+
+% ---------------------------------------------------------------- rate limiting
+\section{Rate limiting}
+
+Requests are limited \textbf{per key, per minute}. Every response carries the current
+budget; \tc{429} responses also tell you when to retry.
+
+\rowcolors{2}{white}{codebg}
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\rowcolor{tablehead}\textbf{Header} & \textbf{Meaning}\\
+\midrule
+\tc{X-RateLimit-Limit} & Maximum requests allowed per minute for your key.\\
+\tc{X-RateLimit-Remaining} & Requests remaining in the current 60-second window.\\
+\tc{Retry-After} & (On \tc{429}) seconds until the window resets.\\
+\bottomrule
+\end{tabularx}
+\begin{center}\small Table 6: Rate-limit headers.\end{center}
+
+\noindent\textbf{Best practice.} Cache the last good forecast on your side and poll no
+faster than you need (the data changes about every 5 minutes). On \tc{429}, wait for
+\tc{Retry-After} seconds before retrying.
+
+% ---------------------------------------------------------------- examples
+\section{Code examples}
+
+\subsection{cURL}
+\begin{lstlisting}[style=bash]
+curl -sS -H "Authorization: Bearer hsk_live_xxxxxxxxxxxxxxxx" \
+     https://heliosat-live.vercel.app/api/v1/forecast/realtime
+\end{lstlisting}
+
+\subsection{Python}
+\begin{lstlisting}[style=python]
+import requests
+
+API_KEY  = "hsk_live_xxxxxxxxxxxxxxxx"
+BASE_URL = "https://heliosat-live.vercel.app"
+
+resp = requests.get(
+    f"{BASE_URL}/api/v1/forecast/realtime",
+    headers={"Authorization": f"Bearer {API_KEY}"},
+    timeout=10,
+)
+resp.raise_for_status()
+forecast = resp.json()
+
+obs = forecast["observed"]
+print(f"Speed {obs['speed_km_s']} km/s, Bz {obs['bz_nt']} nT, G{obs['g_level']}")
+\end{lstlisting}
+
+\subsection{JavaScript (Node 18+)}
+\begin{lstlisting}[style=js]
+const API_KEY  = "hsk_live_xxxxxxxxxxxxxxxx";
+const BASE_URL = "https://heliosat-live.vercel.app";
+
+const res = await fetch(`${BASE_URL}/api/v1/forecast/realtime`, {
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
+if (!res.ok) throw new Error(`HELIOSAT API error: ${res.status}`);
+const forecast = await res.json();
+console.log(forecast.observed.speed_km_s, forecast.observed.g_level);
+\end{lstlisting}
+
+\subsection{Handling rate limits (Python)}
+\begin{lstlisting}[style=python]
+import time, requests
+
+def get_forecast(api_key, base_url, retries=3):
+    headers = {"Authorization": f"Bearer {api_key}"}
+    for _ in range(retries):
+        r = requests.get(f"{base_url}/api/v1/forecast/realtime",
+                         headers=headers, timeout=10)
+        if r.status_code == 429:
+            time.sleep(int(r.headers.get("Retry-After", "5")))
+            continue
+        r.raise_for_status()
+        return r.json()
+    raise RuntimeError("Rate limited; please retry later.")
+\end{lstlisting}
+
+% ---------------------------------------------------------------- versioning
+\section{Versioning \& stability}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item The major version lives in the path (\tc{/api/v1/...}) and is echoed in
+        \tc{schema\_version}.
+  \item Within a major version, changes are \textbf{additive only}: new fields may
+        appear; existing fields are never renamed, removed, or retyped. \emph{Always
+        ignore fields you do not recognise.}
+  \item A breaking change ships as a new major version under a new path
+        (\tc{/api/v2/...}); the previous version remains available during an announced
+        deprecation window.
+  \item Deprecations are communicated in advance to active keys.
+\end{itemize}
+
+% ---------------------------------------------------------------- support
+\section{Support}
+
+Questions, key requests, or higher rate limits:
+\href{mailto:contact@heliosat.co}{contact@heliosat.co}.
+
+\vfill
+\noindent{\color{codeframe}\rule{\textwidth}{0.4pt}}\\
+{\small © \the\year\ HELIOSAT. All rights reserved. This document describes API v1 and
+may be updated as additive features are released.}
+
+\end{document}

@@ -33,7 +33,9 @@ export async function GET() {
     {
       status: stale ? 'stale' : 'ok',
       schema_version: latest.schema_version,
+      model_version: latest.model_version ?? null,
       issued_at: issuedAt,
+      confidence: latest.confidence ?? null,
       forecast_age_seconds: ageSeconds,
       stale,
     },
