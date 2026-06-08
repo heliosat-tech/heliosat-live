@@ -83,10 +83,10 @@ cliente ──GET /v1/forecast──▶  API endpoint  ──▶ JSON en ~50 ms
 
 **Entregable:** forecast siempre fresco, servido rápido y barato. ✅
 
-> **⚠️ Pasos manuales pendientes:**
-> 1. Generar un `CRON_SECRET` (string largo aleatorio) y ponerlo en Vercel (env) **y** en los secrets del repo de GitHub.
-> 2. Añadir el secret `HELIOSAT_BASE_URL` en GitHub (p. ej. `https://heliosat.vercel.app`, sin `/` final).
-> 3. (Opcional) Probar el workflow a mano con **Run workflow** (`workflow_dispatch`) y verificar que `/api/v1/forecast/realtime` deja de dar 503.
+> **✅ Pasos manuales completados (verificado en `https://heliosat-live.vercel.app`):**
+> 1. [X] `CRON_SECRET` generado y puesto en Vercel **y** en los secrets de GitHub.
+> 2. [X] Secret `HELIOSAT_BASE_URL` añadido en GitHub.
+> 3. [X] Workflow probado con **Run workflow** → run **success en 11s**; `/api/v1/status` pasó a `200` fresco y `/api/v1/forecast/realtime` con key → `200`. El schedule (~5 min) lo mantiene fresco 24/7.
 
 ---
 
