@@ -2,18 +2,24 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, Pause, Play, RefreshCw, Timer, Wind } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, RefreshCw, Timer, Wind } from 'lucide-react';
 import { TrainingDataPanel } from './TrainingDataPanel';
 import { Brush, CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 // ---- Server payload (mirror of /api/console) ----
-interface DangerDto { level: number; code: string; label: string; estKp: number; fraction: number }
+interface DangerDto { level: number; code: string; label: string; estKp: number | null; fraction: number }
 interface CurrentDto {
   sampleTimeUtc: string | null;
   speedKmS: number | null;
   densityPerCm3: number | null;
   bzNt: number | null;
   btNt: number | null;
+  pdynNpa?: number | null;
+  emMvM?: number | null;
+  riskAvailable?: boolean;
+  sources?: TransitSources;
+  missingVariables?: string[];
+  qualityFlags?: string[];
   l1DistanceKm: number;
   distanceIsMeasured: boolean;
   lagMinutes: number | null;
@@ -71,9 +77,45 @@ interface SeriesDto {
   stale?: boolean;
   cacheAgeMs?: number;
 }
+interface TransitSources {
+  speedKmS: string | null;
+  bzNt: string | null;
+  btNt: string | null;
+  densityPerCm3: string | null;
+  gLevel: string | null;
+}
+const EMPTY_TRANSIT_SOURCES: TransitSources = {
+  speedKmS: null,
+  bzNt: null,
+  btNt: null,
+  densityPerCm3: null,
+  gLevel: null,
+};
+const EMPTY_SOURCE_TIMES: Record<PhysicalDriverKey, string | null> = {
+  speedKmS: null,
+  bzNt: null,
+  btNt: null,
+  densityPerCm3: null,
+};
 // One solar-wind parcel currently in transit between L1 and Earth (already detected at
-// L1, not yet arrived), with its forecast G level — the input for the transit corridor.
-interface InboundDto { detectedMs: number; arrivalMs: number; gLevel: number; speedKmS: number | null }
+// L1, not yet arrived), with its physical drivers and derived G level.
+interface InboundDto {
+  detectedMs: number;
+  arrivalMs: number;
+  leadTimeMinutes: number;
+  gLevel: number;
+  riskAvailable?: boolean;
+  speedKmS: number | null;
+  bzNt: number | null;
+  btNt: number | null;
+  densityPerCm3: number | null;
+  pdynNpa?: number | null;
+  emMvM?: number | null;
+  sources?: TransitSources;
+  sourceTimeByVariable?: Record<string, string | null>;
+  missingVariables?: string[];
+  qualityFlags?: string[];
+}
 interface ConsoleResponse {
   generatedAtUtc: string;
   current: CurrentDto | null;
@@ -143,21 +185,24 @@ function Stat({ label, value, unit }: { label: string; value: string; unit?: str
 function DangerHero({ current }: { current: CurrentDto }) {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
   const d = current.danger;
-  const style = dangerStyle(d.level);
-  const headline = d.level === 0
+  const riskAvailable = current.riskAvailable ?? true;
+  const style = dangerStyle(riskAvailable ? d.level : 0);
+  const headline = !riskAvailable
+    ? 'G-risk unavailable — required L1 physical variables are missing'
+    : d.level === 0
     ? 'Quiet — northward/weak field, nominal wind'
     : `${d.code} ${style.word.toLowerCase()} geomagnetic storm expected`;
   return (
     <section
-      className={`rounded-xl border p-5 shadow-2xl ${style.chip.split(' ')[0]}`}
-      style={{ background: `radial-gradient(120% 140% at 0% 0%, ${style.glow}, rgba(2,6,23,0.6) 60%)` }}
+      className={`rounded-xl border p-5 shadow-2xl ${riskAvailable ? style.chip.split(' ')[0] : 'border-slate-700/60 text-slate-300'}`}
+      style={{ background: `radial-gradient(120% 140% at 0% 0%, ${riskAvailable ? style.glow : 'rgba(51,65,85,0.16)'}, rgba(2,6,23,0.6) 60%)` }}
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">Main forecast · 30-min L1 average</div>
-          <div className={`mt-1 flex items-baseline gap-3 ${style.text}`}>
-            <span className="font-mono text-4xl font-semibold tracking-wider">{d.level === 0 ? 'G0' : d.code}</span>
-            <span className="text-xl font-semibold uppercase tracking-widest">{style.word}</span>
+          <div className={`mt-1 flex items-baseline gap-3 ${riskAvailable ? style.text : 'text-slate-300'}`}>
+            <span className="font-mono text-4xl font-semibold tracking-wider">{riskAvailable ? (d.level === 0 ? 'G0' : d.code) : '—'}</span>
+            <span className="text-xl font-semibold uppercase tracking-widest">{riskAvailable ? style.word : 'Risk unavailable'}</span>
           </div>
           <p className="mt-1 max-w-xl text-sm text-slate-300">{headline}</p>
         </div>
@@ -173,7 +218,7 @@ function DangerHero({ current }: { current: CurrentDto }) {
       {/* Danger gradient bar */}
       <div className="mt-4">
         <div className="relative h-3 w-full overflow-hidden rounded-full border border-slate-700/60" style={{ background: 'linear-gradient(90deg,#34d399 0%,#a3e635 20%,#fbbf24 45%,#fb923c 65%,#f87171 82%,#e879f9 100%)' }}>
-          <div className="absolute top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-white shadow" style={{ left: `calc(${(d.fraction * 100).toFixed(1)}% - 2px)` }} />
+          {riskAvailable && <div className="absolute top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-white shadow" style={{ left: `calc(${(d.fraction * 100).toFixed(1)}% - 2px)` }} />}
         </div>
         <div className="mt-1 flex justify-between font-mono text-[8px] uppercase tracking-widest text-slate-600">
           <span>Quiet</span><span>G1</span><span>G2</span><span>G3</span><span>G4</span><span>G5</span>
@@ -181,7 +226,9 @@ function DangerHero({ current }: { current: CurrentDto }) {
       </div>
 
       <p className="mt-3 max-w-3xl text-[10px] leading-relaxed text-slate-500">
-        This is the smoothed headline forecast. Shorter spikes can still appear below as a stronger inbound peak.
+        {riskAvailable
+          ? 'This is the smoothed headline forecast. Shorter spikes can still appear below as a stronger inbound peak.'
+          : `Missing variables: ${formatMissingVariables(current.missingVariables ?? [])}. Quality flags: ${formatFlags(current.qualityFlags ?? [])}.`}
       </p>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -216,63 +263,341 @@ function fmtCountdown(ms: number) {
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 }
 
-interface InboundParcel { detectedMs: number; arrivalMs: number; gLevel: number; speedKmS: number | null }
-interface GForecastPoint { t: number; level: number }
-interface ReplaySeries { window: string; startMs: number; endMs: number; gForecast: GForecastPoint[] }
+interface InboundParcel {
+  detectedMs: number;
+  arrivalMs: number;
+  leadTimeMinutes: number | null;
+  gLevel: number;
+  riskAvailable?: boolean;
+  speedKmS: number | null;
+  bzNt: number | null;
+  btNt: number | null;
+  densityPerCm3: number | null;
+  pdynNpa?: number | null;
+  emMvM?: number | null;
+  sources?: TransitSources;
+  sourceTimeByVariable?: Record<string, string | null>;
+  missingVariables?: string[];
+  qualityFlags?: string[];
+}
+interface GForecastPoint {
+  t: number;
+  level: number;
+  riskAvailable?: boolean;
+  detectedMs: number | null;
+  leadTimeMinutes: number | null;
+  speedKmS: number | null;
+  bzNt: number | null;
+  btNt: number | null;
+  densityPerCm3: number | null;
+  pdynNpa?: number | null;
+  emMvM?: number | null;
+  sources?: TransitSources;
+  sourceTimeByVariable?: Record<string, string | null>;
+  missingVariables?: string[];
+  qualityFlags?: string[];
+}
+interface TransitCoverageDiagnostics {
+  totalBins: number;
+  available: { speed: number; bz: number; bt: number; density: number; pdyn: number; em: number; gRisk: number };
+  missing: { speed: number; bz: number; bt: number; density: number; pdyn: number; em: number; gRisk: number };
+  sourceCounts: Record<string, number>;
+  largestGaps: Array<{ variable: string; startUtc: string; endUtc: string; durationMinutes: number; reason: string }>;
+}
+interface ReplaySeries { window: string; startMs: number; endMs: number; gForecast: GForecastPoint[]; coverage?: TransitCoverageDiagnostics }
+interface TransitSample {
+  detectedMs: number | null;
+  arrivalMs: number;
+  leadTimeMinutes: number | null;
+  gLevel: number;
+  riskAvailable: boolean;
+  speedKmS: number | null;
+  bzNt: number | null;
+  btNt: number | null;
+  densityPerCm3: number | null;
+  pdynNpa: number | null;
+  emMvM: number | null;
+  sources: TransitSources;
+  sourceTimeByVariable: Record<PhysicalDriverKey, string | null>;
+  missingVariables: string[];
+  qualityFlags: string[];
+}
+interface TransitPoint { x: number; sample: TransitSample }
+interface TransitSegment { start: number; end: number; sample: TransitSample }
+type PhysicalDriverKey = 'speedKmS' | 'bzNt' | 'btNt' | 'densityPerCm3';
 
-/** Corridor view: live "now", or replay a past period (up to 1 month). */
+/** Corridor view: live "now", or a static forecast-G heatmap of a past period. */
 const CORRIDOR_WINDOWS: Array<{ key: string; label: string }> = [
   { key: 'live', label: 'Live' },
   { key: '24h', label: '24 h' },
   { key: '7d', label: '7 d' },
   { key: '30d', label: '30 d' },
+  { key: '90d', label: '3 mo' },
+  { key: '1y', label: '1 y' },
 ];
-const SPEEDS = [1, 2, 4] as const;
-const PLAY_BASE_MS = 28_000; // whole window plays in ~28 s at 1x
 const NO_DATA_FILL = '#334155';
-
-/** Even-stride downsample to keep gradient stop counts bounded. */
-function strideArray<T>(arr: T[], target: number): T[] {
-  if (arr.length <= target) return arr;
-  const step = arr.length / target;
-  const out: T[] = [];
-  for (let i = 0; i < arr.length; i += step) out.push(arr[Math.floor(i)]);
-  return out;
-}
 
 const fmtDay = (ms: number, timeZone: string) =>
   new Date(ms).toLocaleDateString('en-US', { month: 'short', day: '2-digit', timeZone });
 
-/** In-transit parcels as ordered colour stops along the corridor (0 = at L1, 1 = at Earth). */
-function corridorStops(inbound: InboundParcel[], nowMs: number) {
-  return inbound
-    .map(p => {
-      const span = p.arrivalMs - p.detectedMs;
-      if (span <= 0) return null;
-      const f = (nowMs - p.detectedMs) / span;
-      if (f < 0 || f > 1) return null;
-      return { f, level: p.gLevel };
-    })
-    .filter((s): s is { f: number; level: number } => s !== null)
-    .sort((a, b) => a.f - b.f);
+function getVswRiskColor(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return NO_DATA_FILL;
+  if (value < 400) return '#34d399';
+  if (value < 550) return '#a3e635';
+  if (value < 700) return '#fbbf24';
+  return '#f87171';
 }
 
-/** CSS gradient from ordered {f, level} stops (f in [0,1]; 0 = L1, 1 = Earth). */
-function buildCorridorGradient(stops: Array<{ f: number; level: number }>): string {
-  if (stops.length === 0) return dangerStyle(0).dot;
-  const parts = [`${dangerStyle(stops[0].level).dot} 0%`];
-  for (const s of stops) parts.push(`${dangerStyle(s.level).dot} ${(s.f * 100).toFixed(1)}%`);
-  parts.push(`${dangerStyle(stops[stops.length - 1].level).dot} 100%`);
-  return `linear-gradient(90deg, ${parts.join(', ')})`;
+function getBzRiskColor(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return NO_DATA_FILL;
+  if (value >= 0) return '#34d399';
+  if (value >= -5) return '#a3e635';
+  if (value >= -10) return '#fbbf24';
+  if (value >= -20) return '#fb923c';
+  return '#e879f9';
+}
+
+function getBtRiskColor(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return NO_DATA_FILL;
+  if (value < 5) return '#34d399';
+  if (value < 10) return '#a3e635';
+  if (value < 20) return '#fbbf24';
+  return '#fb923c';
+}
+
+function getDensityRiskColor(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return NO_DATA_FILL;
+  if (value < 5) return '#34d399';
+  if (value < 10) return '#a3e635';
+  if (value < 30) return '#fbbf24';
+  return '#fb923c';
+}
+
+function driverRiskRank(key: PhysicalDriverKey, value: number | null) {
+  if (value === null || !Number.isFinite(value)) return -1;
+  if (key === 'speedKmS') return value < 400 ? 0 : value < 550 ? 1 : value < 700 ? 2 : 3;
+  if (key === 'bzNt') return value >= 0 ? 0 : value >= -5 ? 1 : value >= -10 ? 2 : value >= -20 ? 3 : 4;
+  if (key === 'btNt') return value < 5 ? 0 : value < 10 ? 1 : value < 20 ? 2 : 3;
+  return value < 5 ? 0 : value < 10 ? 1 : value < 30 ? 2 : 3;
+}
+
+function driverInterpretation(key: PhysicalDriverKey, value: number | null) {
+  if (value === null || !Number.isFinite(value)) return 'sample missing for this variable';
+  if (key === 'speedKmS') {
+    if (value < 400) return 'slow solar wind';
+    if (value < 550) return 'moderate solar-wind speed';
+    if (value < 700) return 'fast solar wind';
+    return 'high-speed solar wind';
+  }
+  if (key === 'bzNt') {
+    if (value >= 0) return 'northward IMF; low coupling risk';
+    if (value >= -5) return 'weak southward IMF';
+    if (value >= -10) return 'moderate southward IMF';
+    if (value >= -20) return 'strong southward IMF, geoeffective if sustained';
+    return 'severe southward IMF, highly geoeffective if sustained';
+  }
+  if (key === 'btNt') {
+    if (value < 5) return 'quiet IMF magnitude';
+    if (value < 10) return 'moderate IMF magnitude';
+    if (value < 20) return 'elevated IMF magnitude';
+    return 'high IMF magnitude';
+  }
+  if (value < 5) return 'low proton density';
+  if (value < 10) return 'moderate proton density';
+  if (value < 30) return 'enhanced solar-wind density';
+  return 'high solar-wind density';
+}
+
+function physicalDriverColor(key: PhysicalDriverKey, value: number | null) {
+  if (key === 'speedKmS') return getVswRiskColor(value);
+  if (key === 'bzNt') return getBzRiskColor(value);
+  if (key === 'btNt') return getBtRiskColor(value);
+  return getDensityRiskColor(value);
+}
+
+function formatDriverValue(value: number | null, digits: number) {
+  return value === null || !Number.isFinite(value) ? 'missing' : value.toFixed(digits);
+}
+
+function thinTransitPoints(points: TransitPoint[], target: number, riskFor: (sample: TransitSample) => number) {
+  if (points.length <= target) return points;
+  const bucket = Math.ceil(points.length / target);
+  const out: TransitPoint[] = [];
+  for (let i = 0; i < points.length; i += bucket) {
+    let best = points[i];
+    let bestRank = riskFor(best.sample);
+    for (let j = i + 1; j < Math.min(i + bucket, points.length); j += 1) {
+      const rank = riskFor(points[j].sample);
+      if (rank > bestRank) {
+        best = points[j];
+        bestRank = rank;
+      }
+    }
+    out.push(best);
+  }
+  return out;
+}
+
+function pointsToSegments(points: TransitPoint[]): TransitSegment[] {
+  if (points.length === 0) return [];
+  const sorted = points.slice().sort((a, b) => a.x - b.x);
+  return sorted.map((point, index) => {
+    const prev = sorted[index - 1];
+    const next = sorted[index + 1];
+    const start = index === 0 ? 0 : clamp01((prev.x + point.x) / 2);
+    const end = index === sorted.length - 1 ? 1 : clamp01((point.x + next.x) / 2);
+    return { start, end: Math.max(end, start), sample: point.sample };
+  });
+}
+
+const PHYSICAL_DRIVER_ROWS: Array<{
+  key: PhysicalDriverKey;
+  label: string;
+  unit: string;
+  digits: number;
+}> = [
+  { key: 'speedKmS', label: 'Vsw', unit: 'km/s', digits: 0 },
+  { key: 'bzNt', label: 'Bz GSM', unit: 'nT', digits: 1 },
+  { key: 'btNt', label: '|B|', unit: 'nT', digits: 1 },
+  { key: 'densityPerCm3', label: 'np', unit: 'cm^-3', digits: 1 },
+];
+
+function sampleValue(sample: TransitSample, key: PhysicalDriverKey) {
+  return sample[key];
+}
+
+function normalizeSourceTimes(sourceTimes: Record<string, string | null> | undefined): Record<PhysicalDriverKey, string | null> {
+  if (!sourceTimes) return EMPTY_SOURCE_TIMES;
+  return {
+    speedKmS: sourceTimes.speedKmS ?? sourceTimes.speed ?? null,
+    bzNt: sourceTimes.bzNt ?? sourceTimes.bz ?? null,
+    btNt: sourceTimes.btNt ?? sourceTimes.bt ?? null,
+    densityPerCm3: sourceTimes.densityPerCm3 ?? sourceTimes.density ?? null,
+  };
+}
+
+function tooltipTime(ms: number | null, timeZone: string, tzLabel: string) {
+  if (ms === null || !Number.isFinite(ms)) return 'unavailable';
+  return `${fmtDateTime(new Date(ms).toISOString(), timeZone)} ${tzLabel}`;
+}
+
+function sourceLabel(source: string | null | undefined) {
+  return source && source.trim() ? source : 'no source for this value';
+}
+
+function formatFlags(flags: string[]) {
+  return flags.length ? flags.join(', ') : 'none';
+}
+
+function formatMissingVariables(missing: string[]) {
+  return missing.length ? missing.join(', ') : 'none';
+}
+
+function gTooltip(sample: TransitSample, timeZone: string, tzLabel: string) {
+  const style = dangerStyle(sample.gLevel);
+  return [
+    sample.riskAvailable ? `G risk: G${sample.gLevel} ${style.word.toLowerCase()}` : 'G risk: unavailable',
+    `Detected at L1: ${tooltipTime(sample.detectedMs, timeZone, tzLabel)}`,
+    `ETA at Earth's bow-shock nose: ${tooltipTime(sample.arrivalMs, timeZone, tzLabel)}`,
+    `Transit lead: ${sample.leadTimeMinutes !== null ? `${sample.leadTimeMinutes} min` : 'unavailable'}`,
+    `Source: ${sourceLabel(sample.sources.gLevel)}`,
+    `Missing variables: ${formatMissingVariables(sample.missingVariables)}`,
+    `Quality flags: ${formatFlags(sample.qualityFlags)}`,
+    `Interpretation: ${sample.riskAvailable ? 'derived geomagnetic-risk proxy from propagated solar-wind drivers' : 'not derived because the required L1 drivers are missing'}`,
+  ].join('\n');
+}
+
+function driverTooltip(
+  row: (typeof PHYSICAL_DRIVER_ROWS)[number],
+  sample: TransitSample,
+  timeZone: string,
+  tzLabel: string,
+) {
+  const value = sampleValue(sample, row.key);
+  return [
+    `${row.label}: ${formatDriverValue(value, row.digits)} ${row.unit}`,
+    `Detected at L1: ${tooltipTime(sample.detectedMs, timeZone, tzLabel)}`,
+    `Source time for ${row.label}: ${tooltipTime(sample.sourceTimeByVariable[row.key] ? new Date(sample.sourceTimeByVariable[row.key]!).getTime() : null, timeZone, tzLabel)}`,
+    `ETA at Earth's bow-shock nose: ${tooltipTime(sample.arrivalMs, timeZone, tzLabel)}`,
+    `Transit lead: ${sample.leadTimeMinutes !== null ? `${sample.leadTimeMinutes} min` : 'unavailable'}`,
+    `G risk proxy: ${sample.riskAvailable ? `G${sample.gLevel}` : 'unavailable'}`,
+    `Source: ${sourceLabel(sample.sources[row.key])}`,
+    `Missing variables: ${formatMissingVariables(sample.missingVariables)}`,
+    `Quality flags: ${formatFlags(sample.qualityFlags)}`,
+    `Interpretation: ${driverInterpretation(row.key, value)}`,
+  ].join('\n');
+}
+
+function TransitBand({
+  label,
+  unit,
+  segments,
+  heightClass,
+  colorFor,
+  titleFor,
+  liveMarkers,
+  ariaLabel,
+}: {
+  label: string;
+  unit?: string;
+  segments: TransitSegment[];
+  heightClass: string;
+  colorFor: (sample: TransitSample) => string;
+  titleFor: (sample: TransitSample) => string;
+  liveMarkers?: boolean;
+  ariaLabel: string;
+}) {
+  return (
+    <>
+      <div className="flex min-w-0 items-center justify-between gap-2 pr-1 font-mono text-[9px] uppercase tracking-widest text-slate-500">
+        <span className="truncate text-slate-400">{label}</span>
+        {unit && <span className="shrink-0 text-[8px] text-slate-600">{unit}</span>}
+      </div>
+      <div
+        className={`relative w-full overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/70 shadow-inner ${heightClass}`}
+        aria-label={ariaLabel}
+      >
+        {segments.length > 0 ? segments.map((segment, index) => {
+          const title = titleFor(segment.sample);
+          return (
+            <div
+              key={`${segment.sample.arrivalMs}-${index}`}
+              className="absolute top-0 h-full"
+              style={{
+                left: `${(segment.start * 100).toFixed(3)}%`,
+                width: `${Math.max((segment.end - segment.start) * 100, 0.06).toFixed(3)}%`,
+                backgroundColor: colorFor(segment.sample),
+              }}
+              title={title}
+              aria-label={title}
+            />
+          );
+        }) : (
+          <div className="absolute inset-0" style={{ backgroundColor: NO_DATA_FILL }} title="No propagated sample data available" />
+        )}
+        <div className="pointer-events-none absolute inset-0 opacity-25 mix-blend-overlay" style={{ backgroundImage: 'repeating-linear-gradient(90deg, rgba(255,255,255,0.14) 0 1px, transparent 1px 24px)' }} />
+        {liveMarkers && (
+          <>
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-20 bg-gradient-to-r from-black/40 to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-black/50 to-transparent" />
+            <div className="absolute left-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-white/40 bg-slate-950/70 text-[8px] font-semibold text-cyan-50">L1</div>
+            <div className="absolute right-2 top-1/2 h-6 w-6 -translate-y-1/2 rounded-full border border-white/50 bg-[radial-gradient(circle_at_32%_30%,#f8fafc_0%,#60a5fa_22%,#1d4ed8_60%,#0b1220_85%)] shadow-[0_0_18px_rgba(56,189,248,0.4)]" />
+            <div className="absolute right-[11px] top-0 h-full w-px bg-white/70 animate-pulse" />
+          </>
+        )}
+        {!liveMarkers && <div className="pointer-events-none absolute right-0 top-0 h-full w-px bg-white/40" />}
+      </div>
+    </>
+  );
 }
 
 /**
  * The L1→Earth corridor as a CONTINUOUS band coloured by the forecast G level of the wind
  * in transit. In LIVE mode each in-transit parcel is a colour stop at its current position
  * (0 = just detected at L1, 1 = arriving at Earth); a fresh disturbance appears at the L1
- * edge and slides toward Earth over the next ~lag minutes. In REPLAY mode the same corridor
- * is reconstructed for any past instant T from the forecast-G history (arrivals in
- * [T, T+lag]), so the slider / play button shows how it evolved over a chosen period.
+ * edge and slides toward Earth over the next ~lag minutes. In REPLAY mode the band is a
+ * static heatmap of the forecast-G history over a chosen window (time ascending,
+ * left → right), so a whole month/year of geomagnetic activity is read at a glance.
  */
 function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inbound: InboundParcel[]; nowMs: number }) {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
@@ -286,21 +611,12 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
   const remainingKm = hasTransit ? current.l1DistanceKm * (1 - progress) : null;
   const elapsedKm = hasTransit ? current.l1DistanceKm * progress : null;
   const lagMin = current.lagMinutes;
-  const lagMs = (current.lagMinutes ?? 50) * 60_000;
 
   // ---- Replay state ----
   const [windowKey, setWindowKey] = useState('live');
   const [replay, setReplay] = useState<ReplaySeries | null>(null);
-  const [scrubT, setScrubT] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState<number>(1);
   const replayCache = useRef<Map<string, ReplaySeries>>(new Map());
-  const playheadElRef = useRef<HTMLDivElement | null>(null);
-  const sliderRef = useRef<HTMLInputElement | null>(null);
-  const labelRef = useRef<HTMLSpanElement | null>(null);
-  const timeRef = useRef(0);
   const isReplay = windowKey !== 'live';
-  const selectWindow = (key: string) => { setPlaying(false); setSpeed(1); setWindowKey(key); };
   // Trust the loaded series only if it matches the current window (avoids a stale flash).
   const activeReplay = isReplay && replay && replay.window === windowKey ? replay : null;
   const replayLoading = isReplay && !activeReplay;
@@ -314,16 +630,15 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
     let cancelled = false;
     (async () => {
       const cached = replayCache.current.get(windowKey);
-      if (cached) { if (!cancelled) { setReplay(cached); setScrubT(cached.endMs); } return; }
+      if (cached) { if (!cancelled) setReplay(cached); return; }
       try {
         const r = await fetch(`/api/console/corridor?window=${windowKey}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
         if (!r.ok || cancelled) return;
-        const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[] };
+        const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[]; coverage?: TransitCoverageDiagnostics };
         if (cancelled) return;
-        const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t) };
+        const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t), coverage: s.coverage };
         replayCache.current.set(windowKey, series);
         setReplay(series);
-        setScrubT(series.endMs);
       } catch {
         /* leave empty -> "no data" state */
       }
@@ -331,79 +646,122 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
     return () => { cancelled = true; };
   }, [windowKey]);
 
-  // Static full-window G heatmap (time ascending, left → right). Built once per window.
-  const replayGradient = useMemo(() => {
-    if (!activeReplay || activeReplay.gForecast.length === 0) return NO_DATA_FILL;
-    const s = activeReplay.startMs;
-    const pts = activeReplay.gForecast.map(p => ({ x: clamp01((p.t - s) / span), level: p.level })).sort((a, b) => a.x - b.x);
-    const parts = strideArray(pts, 700).map(p => `${dangerStyle(p.level).dot} ${(p.x * 100).toFixed(2)}%`);
-    return `linear-gradient(90deg, ${parts.join(', ')})`;
+  // Evenly-spaced date ticks under the heatmap.
+  const replayTicks = useMemo(() => {
+    if (!activeReplay) return [] as Array<{ f: number; ms: number }>;
+    const n = 5;
+    return Array.from({ length: n }, (_, i) => { const f = i / (n - 1); return { f, ms: activeReplay.startMs + f * span }; });
   }, [activeReplay, span]);
 
-  // Imperatively position the playhead marker + slider + time label. No React re-render per
-  // frame → the playback is a pure GPU transform and stays perfectly smooth.
-  const applyPlayhead = useCallback((T: number) => {
-    timeRef.current = T;
-    if (!activeReplay) return;
-    const f = clamp01((T - activeReplay.startMs) / span);
-    if (playheadElRef.current) playheadElRef.current.style.transform = `translateX(${(f * 100).toFixed(3)}%)`;
-    if (sliderRef.current && document.activeElement !== sliderRef.current) sliderRef.current.value = String(Math.round(T));
-    if (labelRef.current) labelRef.current.textContent = `${fmtDateTime(new Date(T).toISOString(), timeZone)} ${tzLabel}`;
-  }, [activeReplay, span, timeZone, tzLabel]);
-
-  // Position the playhead at the most recent time whenever a window finishes loading.
-  useEffect(() => {
-    if (activeReplay) applyPlayhead(activeReplay.endMs);
-  }, [activeReplay, applyPlayhead]);
-
-  // Smooth playback: advance the imperative playhead via requestAnimationFrame, looping.
-  useEffect(() => {
-    if (!playing || !activeReplay) return;
-    let raf = 0;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = now - last;
-      last = now;
-      let T = timeRef.current + span * (dt / PLAY_BASE_MS) * speed;
-      if (T >= activeReplay.endMs) T = activeReplay.startMs;
-      applyPlayhead(T);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, activeReplay, span, speed, applyPlayhead]);
-
-  const togglePlay = () => {
-    if (playing) { setScrubT(timeRef.current); setPlaying(false); }
-    else setPlaying(true);
-  };
-  const onScrub = (v: number) => { if (playing) setPlaying(false); setScrubT(v); applyPlayhead(v); };
-
-  // Strongest G in the corridor window at the paused/scrubbed time (drives the banner).
-  const replayPeak = useMemo(() => {
-    if (!activeReplay) return { level: 0, eta: Number.POSITIVE_INFINITY, hasData: false };
+  // Strongest forecast G anywhere in the window (the period's worst storm) — drives the banner.
+  const windowPeak = useMemo(() => {
+    if (!activeReplay) return { level: 0, atMs: null as number | null, hasData: false, hasRiskData: false };
     let level = 0;
-    let eta = Number.POSITIVE_INFINITY;
+    let atMs: number | null = null;
+    let hasRiskData = false;
     for (const p of activeReplay.gForecast) {
-      if (p.t < scrubT || p.t > scrubT + lagMs) continue;
-      if (p.level > level) { level = p.level; eta = p.t; }
-      else if (p.level === level && level > 0 && p.t < eta) eta = p.t;
+      const available = p.riskAvailable ?? (p.speedKmS !== null && p.bzNt !== null);
+      if (available) hasRiskData = true;
+      if (available && p.level > level) { level = p.level; atMs = p.t; }
     }
-    return { level, eta, hasData: activeReplay.gForecast.length > 0 };
-  }, [activeReplay, scrubT, lagMs]);
+    return { level, atMs, hasData: activeReplay.gForecast.length > 0, hasRiskData };
+  }, [activeReplay]);
 
-  // Live corridor (per-parcel gradient + peak), unchanged from the live view.
+  const replayPoints = useMemo((): TransitPoint[] => {
+    if (!activeReplay) return [] as TransitPoint[];
+    return activeReplay.gForecast
+      .map(p => ({
+        x: clamp01((p.t - activeReplay.startMs) / span),
+        sample: {
+          detectedMs: p.detectedMs ?? null,
+          arrivalMs: p.t,
+          leadTimeMinutes: p.leadTimeMinutes ?? null,
+          gLevel: p.level,
+          riskAvailable: p.riskAvailable ?? (p.speedKmS !== null && p.bzNt !== null),
+          speedKmS: p.speedKmS ?? null,
+          bzNt: p.bzNt ?? null,
+          btNt: p.btNt ?? null,
+          densityPerCm3: p.densityPerCm3 ?? null,
+          pdynNpa: p.pdynNpa ?? null,
+          emMvM: p.emMvM ?? null,
+          sources: p.sources ?? EMPTY_TRANSIT_SOURCES,
+          sourceTimeByVariable: normalizeSourceTimes(p.sourceTimeByVariable),
+          missingVariables: p.missingVariables ?? [],
+          qualityFlags: p.qualityFlags ?? [],
+        },
+      }))
+      .sort((a, b) => a.x - b.x);
+  }, [activeReplay, span]);
+
+  const livePoints = useMemo((): TransitPoint[] => inbound
+    .map((p): TransitPoint | null => {
+      const spanMs = p.arrivalMs - p.detectedMs;
+      if (spanMs <= 0) return null;
+      const x = (effectiveNow - p.detectedMs) / spanMs;
+      if (x < 0 || x > 1) return null;
+      return {
+        x,
+        sample: {
+          detectedMs: p.detectedMs,
+          arrivalMs: p.arrivalMs,
+          leadTimeMinutes: p.leadTimeMinutes ?? Math.round(spanMs / 60000),
+          gLevel: p.gLevel,
+          riskAvailable: p.riskAvailable ?? (p.speedKmS !== null && p.bzNt !== null),
+          speedKmS: p.speedKmS,
+          bzNt: p.bzNt,
+          btNt: p.btNt,
+          densityPerCm3: p.densityPerCm3,
+          pdynNpa: p.pdynNpa ?? null,
+          emMvM: p.emMvM ?? null,
+          sources: p.sources ?? EMPTY_TRANSIT_SOURCES,
+          sourceTimeByVariable: normalizeSourceTimes(p.sourceTimeByVariable),
+          missingVariables: p.missingVariables ?? [],
+          qualityFlags: p.qualityFlags ?? [],
+        },
+      };
+    })
+    .filter((p): p is TransitPoint => p !== null)
+    .sort((a, b) => a.x - b.x), [inbound, effectiveNow]);
+
+  const transitPoints = isReplay ? replayPoints : livePoints;
+  const gSegments = useMemo(() => pointsToSegments(thinTransitPoints(transitPoints, 2000, sample => sample.riskAvailable ? sample.gLevel : -1)), [transitPoints]);
+  const driverSegments = useMemo(() => {
+    const result = {} as Record<PhysicalDriverKey, TransitSegment[]>;
+    for (const row of PHYSICAL_DRIVER_ROWS) {
+      result[row.key] = pointsToSegments(thinTransitPoints(transitPoints, 2000, sample => driverRiskRank(row.key, sampleValue(sample, row.key))));
+    }
+    return result;
+  }, [transitPoints]);
+  const coverageSummary = useMemo(() => {
+    const coverage = activeReplay?.coverage;
+    if (!coverage || coverage.totalBins <= 0) return null;
+    const pct = (available: number) => `${Math.round((available / coverage.totalBins) * 100)}%`;
+    const gapText = coverage.largestGaps.length
+      ? coverage.largestGaps.slice(0, 4).map(gap => `${gap.variable}: ${fmtDateTime(gap.startUtc, timeZone)} → ${fmtClock(gap.endUtc, timeZone)} (${gap.durationMinutes} min)`).join('\n')
+      : 'No missing-variable gaps in this replay window.';
+    return {
+      text: `data coverage · Vsw ${pct(coverage.available.speed)} · Bz ${pct(coverage.available.bz)} · |B| ${pct(coverage.available.bt)} · np ${pct(coverage.available.density)} · G-risk ${pct(coverage.available.gRisk)}`,
+      title: `Largest remaining gaps\n${gapText}`,
+    };
+  }, [activeReplay, timeZone]);
+
+  // Live corridor inbound peak, derived from the same in-transit parcels as the bars.
   const liveCorridor = useMemo(() => {
-    const stops = corridorStops(inbound, effectiveNow);
     let level = 0;
     let eta = Number.POSITIVE_INFINITY;
-    for (const p of inbound) { if (p.arrivalMs <= effectiveNow) continue; if (p.gLevel > level) { level = p.gLevel; eta = p.arrivalMs; } else if (p.gLevel === level && level > 0 && p.arrivalMs < eta) eta = p.arrivalMs; }
-    return { gradient: buildCorridorGradient(stops), peak: { level, eta }, hasData: inbound.length > 0 };
+    let hasRiskData = false;
+    for (const p of inbound) {
+      if (p.arrivalMs <= effectiveNow) continue;
+      if (!(p.riskAvailable ?? (p.speedKmS !== null && p.bzNt !== null))) continue;
+      hasRiskData = true;
+      if (p.gLevel > level) { level = p.gLevel; eta = p.arrivalMs; }
+      else if (p.gLevel === level && level > 0 && p.arrivalMs < eta) eta = p.arrivalMs;
+    }
+    return { peak: { level, eta }, hasData: inbound.length > 0, hasRiskData };
   }, [inbound, effectiveNow]);
 
-  const peak = isReplay ? replayPeak : liveCorridor.peak;
-  const hasData = isReplay ? replayPeak.hasData : liveCorridor.hasData;
-  const peakStyle = dangerStyle(peak.level);
+  const hasData = isReplay ? windowPeak.hasData : liveCorridor.hasData;
+  const peakStyle = dangerStyle(isReplay ? windowPeak.level : liveCorridor.peak.level);
 
   const tile = (label: string, value: ReactNode, accent = false) => (
     <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2">
@@ -419,7 +777,7 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
           <Timer className="h-4 w-4 flex-shrink-0 text-cyan-300" aria-hidden="true" />
           <div className="min-w-0">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-200">CME transit · L1 to Earth</h2>
-            <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-widest text-slate-500">Forecast G level along the L1 → Earth corridor</p>
+            <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-widest text-slate-500">L1 measurements shifted to estimated Earth bow-shock arrival time</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2 font-mono text-[10px] uppercase tracking-widest">
@@ -435,62 +793,39 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
         </div>
       </div>
 
-      {/* Live / replay selector + scrubber + play */}
+      {/* Live / replay window selector */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="inline-flex overflow-hidden rounded-md border border-slate-700/60">
           {CORRIDOR_WINDOWS.map(w => (
-            <button key={w.key} type="button" onClick={() => selectWindow(w.key)}
+            <button key={w.key} type="button" onClick={() => setWindowKey(w.key)}
               className={`px-2 py-1 font-mono text-[9px] uppercase tracking-widest transition ${windowKey === w.key ? 'bg-cyan-400/15 text-cyan-100' : 'text-slate-400 hover:text-slate-200'}`}>
               {w.label}
             </button>
           ))}
         </div>
-        {isReplay && (
-          <div className="flex min-w-[260px] flex-1 items-center gap-2">
-            <button type="button" onClick={togglePlay} disabled={!activeReplay}
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-400/30 bg-cyan-400/10 text-cyan-100 transition hover:border-cyan-300/60 disabled:opacity-40"
-              title={playing ? 'Pause' : 'Play'} aria-label={playing ? 'Pause' : 'Play'}>
-              {playing ? <Pause className="h-3.5 w-3.5" aria-hidden="true" /> : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
-            </button>
-            <input ref={sliderRef} type="range" aria-label="Replay time"
-              min={activeReplay?.startMs ?? 0} max={activeReplay?.endMs ?? 1}
-              step={Math.max(1, Math.round(((activeReplay?.endMs ?? 1) - (activeReplay?.startMs ?? 0)) / 2000))}
-              defaultValue={activeReplay?.endMs ?? 0} disabled={!activeReplay}
-              onInput={e => onScrub(Number(e.currentTarget.value))}
-              className="h-1.5 flex-1 cursor-pointer accent-cyan-400 disabled:opacity-40" />
-            <span ref={labelRef} className="w-[116px] whitespace-nowrap text-right font-mono text-[9px] tabular-nums text-slate-300">
-              {activeReplay ? `${fmtDateTime(new Date(scrubT).toISOString(), timeZone)} ${tzLabel}` : replayLoading ? 'loading…' : '—'}
-            </span>
-            <div className="inline-flex flex-shrink-0 overflow-hidden rounded-md border border-slate-700/60">
-              {SPEEDS.map(s => (
-                <button key={s} type="button" onClick={() => setSpeed(s)} disabled={!activeReplay}
-                  className={`px-1.5 py-1 font-mono text-[9px] tracking-widest transition disabled:opacity-40 ${speed === s ? 'bg-cyan-400/15 text-cyan-100' : 'text-slate-400 hover:text-slate-200'}`}>
-                  {s}×
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
-      {isReplay && playing ? (
-        <div className="mb-3 flex items-center gap-2 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-cyan-100">
-          <Play className="h-3 w-3" aria-hidden="true" /> Playing · {speed}× — drag the slider to inspect a moment
-        </div>
-      ) : hasData && peak.level > 0 && Number.isFinite(peak.eta) ? (
+      {!isReplay && liveCorridor.hasData && liveCorridor.peak.level > 0 && Number.isFinite(liveCorridor.peak.eta) ? (
         <div className={`mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest ${peakStyle.chip}`}>
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: peakStyle.dot }} />
-          G{peak.level} {peakStyle.word.toLowerCase()} {isReplay ? 'at marker' : 'inbound'}
-          {isReplay ? (
-            <span className="text-slate-400">· arrives {fmtClock(new Date(peak.eta).toISOString(), timeZone)} {tzLabel}</span>
-          ) : (
-            <span className="text-slate-400">· reaches Earth in {fmtCountdown(peak.eta - effectiveNow)} ({fmtClock(new Date(peak.eta).toISOString(), timeZone)} {tzLabel})</span>
-          )}
+          G{liveCorridor.peak.level} {peakStyle.word.toLowerCase()} inbound
+          <span className="text-slate-400">· reaches Earth in {fmtCountdown(liveCorridor.peak.eta - effectiveNow)} ({fmtClock(new Date(liveCorridor.peak.eta).toISOString(), timeZone)} {tzLabel})</span>
+        </div>
+      ) : isReplay && windowPeak.hasData && windowPeak.level > 0 && windowPeak.atMs !== null ? (
+        <div className={`mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest ${peakStyle.chip}`}>
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: peakStyle.dot }} />
+          Peak G{windowPeak.level} {peakStyle.word.toLowerCase()} in the last {windowKey}
+          <span className="text-slate-400">· {fmtDateTime(new Date(windowPeak.atMs).toISOString(), timeZone)} {tzLabel}</span>
+        </div>
+      ) : hasData && (isReplay ? !windowPeak.hasRiskData : !liveCorridor.hasRiskData) ? (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: NO_DATA_FILL }} />
+          G-risk not derived — required physical variables are missing
         </div>
       ) : hasData ? (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-400/30 bg-emerald-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-emerald-200">
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: dangerStyle(0).dot }} />
-          Quiet — only G0 wind {isReplay ? 'at the marker' : 'in transit'}
+          {isReplay ? `Quiet — no storms reached G1 in the last ${windowKey}` : 'Quiet — only G0 wind in transit'}
         </div>
       ) : (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
@@ -499,46 +834,70 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
         </div>
       )}
 
-      <div className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-widest text-slate-500">
-        {isReplay ? (
-          <>
-            <span>{activeReplay ? fmtDay(activeReplay.startMs, timeZone) : '—'}</span>
-            <span className="hidden text-slate-600 sm:inline">forecast G timeline · {windowKey}</span>
-            <span>{activeReplay ? `${fmtDay(activeReplay.endMs, timeZone)} · now` : 'now'}</span>
-          </>
-        ) : (
-          <>
-            <span>L1 · DSCOVR</span>
-            <span className="hidden text-slate-600 sm:inline">detected → in transit → arriving</span>
-            <span>Earth</span>
-          </>
-        )}
+      <div className="mb-1 grid grid-cols-[4.75rem_minmax(0,1fr)] gap-x-2 font-mono text-[9px] uppercase tracking-widest text-slate-500">
+        <div />
+        <div className="flex items-center justify-between">
+          {isReplay ? (
+            <>
+              <span>{activeReplay ? fmtDay(activeReplay.startMs, timeZone) : '—'}</span>
+              <span className="hidden text-slate-600 sm:inline">arrival timeline · {windowKey}</span>
+              <span>{activeReplay ? `${fmtDay(activeReplay.endMs, timeZone)} · now` : 'now'}</span>
+            </>
+          ) : (
+            <>
+              <span>L1 · active RTSW</span>
+              <span className="hidden text-slate-600 sm:inline">detected → in transit → Earth&apos;s bow-shock nose</span>
+              <span>Earth bow shock</span>
+            </>
+          )}
+        </div>
       </div>
-      <div
-        className="relative h-16 w-full overflow-hidden rounded-lg border border-slate-700/70 shadow-inner sm:h-20"
-        style={{ background: isReplay ? replayGradient : liveCorridor.gradient }}
-        aria-label={isReplay ? `Forecast G timeline for the last ${windowKey}.` : `L1 to Earth corridor coloured by forecast storm level. ${liveCorridor.peak.level > 0 ? `G${liveCorridor.peak.level} present.` : 'Quiet.'}`}
-      >
-        <div className="pointer-events-none absolute inset-0 opacity-25 mix-blend-overlay" style={{ backgroundImage: 'repeating-linear-gradient(90deg, rgba(255,255,255,0.14) 0 1px, transparent 1px 24px)' }} />
-        {isReplay ? (
-          <div ref={playheadElRef} className="pointer-events-none absolute inset-y-0 left-0 w-full will-change-transform">
-            <div className="absolute inset-y-0 left-0 w-0.5 bg-white shadow-[0_0_10px_rgba(255,255,255,0.95)]" />
+      {/* Physical rows are measured L1 drivers shifted to Earth's bow-shock arrival time; G risk is a derived proxy. */}
+      <div className="grid grid-cols-[4.75rem_minmax(0,1fr)] gap-x-2 gap-y-1.5">
+        <TransitBand
+          label="G risk"
+          unit="derived"
+          segments={gSegments}
+          heightClass="h-16 sm:h-20"
+          colorFor={sample => sample.riskAvailable ? dangerStyle(sample.gLevel).dot : NO_DATA_FILL}
+          titleFor={sample => gTooltip(sample, timeZone, tzLabel)}
+          liveMarkers={!isReplay}
+          ariaLabel={isReplay ? `Derived G-risk arrival timeline for the last ${windowKey}.` : `L1 to Earth corridor coloured by derived G risk. ${liveCorridor.peak.level > 0 ? `G${liveCorridor.peak.level} present.` : 'Quiet.'}`}
+        />
+        {PHYSICAL_DRIVER_ROWS.map(row => (
+          <TransitBand
+            key={row.key}
+            label={row.label}
+            unit={row.unit}
+            segments={driverSegments[row.key]}
+            heightClass="h-3.5 sm:h-4"
+            colorFor={sample => physicalDriverColor(row.key, sampleValue(sample, row.key))}
+            titleFor={sample => driverTooltip(row, sample, timeZone, tzLabel)}
+            ariaLabel={`${row.label} propagated physical-driver bar`}
+          />
+        ))}
+      </div>
+      {isReplay ? (
+        replayTicks.length > 0 && (
+          <div className="mt-1 grid grid-cols-[4.75rem_minmax(0,1fr)] gap-x-2">
+            <div />
+            <div className="flex justify-between font-mono text-[8px] tabular-nums text-slate-600">
+              {replayTicks.map((t, i) => (
+                <span key={i} className={i === replayTicks.length - 1 ? 'text-slate-400' : ''}>
+                  {i === replayTicks.length - 1 ? 'now' : fmtDay(t.ms, timeZone)}
+                </span>
+              ))}
+            </div>
           </div>
-        ) : (
-          <>
-            <div className="pointer-events-none absolute inset-y-0 left-0 w-20 bg-gradient-to-r from-black/40 to-transparent" />
-            <div className="pointer-events-none absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-black/50 to-transparent" />
-            <div className="absolute left-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-white/40 bg-slate-950/70 text-[8px] font-semibold text-cyan-50">L1</div>
-            <div className="absolute right-2 top-1/2 h-6 w-6 -translate-y-1/2 rounded-full border border-white/50 bg-[radial-gradient(circle_at_32%_30%,#f8fafc_0%,#60a5fa_22%,#1d4ed8_60%,#0b1220_85%)] shadow-[0_0_18px_rgba(56,189,248,0.4)]" />
-            <div className="absolute right-[11px] top-0 h-full w-px bg-white/70 animate-pulse" />
-          </>
-        )}
-      </div>
-      {!isReplay && (
-        <div className="mt-1 flex justify-between font-mono text-[8px] uppercase tracking-widest text-slate-600">
-          <span>{lagMin !== null ? `detected (+${lagMin}m)` : 'detected'}</span>
-          <span>{lagMin !== null ? `+${Math.round(lagMin / 2)}m` : 'in transit'}</span>
-          <span className="text-slate-400">arriving now</span>
+        )
+      ) : (
+        <div className="mt-1 grid grid-cols-[4.75rem_minmax(0,1fr)] gap-x-2">
+          <div />
+          <div className="flex justify-between font-mono text-[8px] uppercase tracking-widest text-slate-600">
+            <span>{lagMin !== null ? `detected (+${lagMin}m)` : 'detected'}</span>
+            <span>{lagMin !== null ? `+${Math.round(lagMin / 2)}m` : 'in transit'}</span>
+            <span className="text-slate-400">arriving now</span>
+          </div>
         </div>
       )}
 
@@ -550,18 +909,30 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
           </span>
         ))}
       </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[8px] uppercase tracking-widest text-slate-500">
+        <span className="text-slate-600">driver thresholds</span>
+        <span>Vsw 400/550/700</span>
+        <span>Bz 0/-5/-10/-20</span>
+        <span>|B| 5/10/20</span>
+        <span>np 5/10/30</span>
+      </div>
+      {coverageSummary && (
+        <div className="mt-1 font-mono text-[8px] uppercase tracking-widest text-slate-500" title={coverageSummary.title}>
+          {coverageSummary.text}
+        </div>
+      )}
 
       {isReplay ? (
         <div className="mt-3 rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-[10px] text-slate-400">
           {activeReplay
-            ? <>Forecast G heatmap for the last <span className="text-slate-200">{windowKey}</span> ({fmtDateTime(new Date(activeReplay.startMs).toISOString(), timeZone)} → {fmtDateTime(new Date(activeReplay.endMs).toISOString(), timeZone)} {tzLabel}). Scrub or press play; the white marker is the selected time.</>
+            ? <>Propagated physical-driver heatmap for the last <span className="text-slate-200">{windowKey}</span> ({fmtDateTime(new Date(activeReplay.startMs).toISOString(), timeZone)} → {fmtDateTime(new Date(activeReplay.endMs).toISOString(), timeZone)} {tzLabel}). The G row is derived risk; the lower rows show inbound L1 physical variables shifted to estimated Earth bow-shock arrival.</>
             : (replayLoading ? 'Loading forecast history…' : 'No forecast history available for this window.')}
         </div>
       ) : (
         <>
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {tile('Detected at L1', <>{current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>)}
-            {tile('Earth ETA', <>{current.arrivalUtc ? fmtClock(current.arrivalUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>, true)}
+            {tile('Bow-shock ETA', <>{current.arrivalUtc ? fmtClock(current.arrivalUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>, true)}
             {tile('Countdown', remainingMs !== null ? fmtCountdown(remainingMs) : '—')}
             {tile('Distance left', <>{fmtCompactKm(remainingKm)} <span className="text-[8px] text-slate-500">km</span></>)}
           </div>
@@ -1245,6 +1616,126 @@ interface ValidationDataDto {
   };
 }
 
+interface PhysicalDriverIntervalSummary {
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  peak_value: number | null;
+  max_vsw: number | null;
+  min_bz: number | null;
+  max_bt: number | null;
+  max_np: number | null;
+  max_pdyn: number | null;
+  max_em: number | null;
+  integrated_southward_bz_nt_min: number;
+  integrated_em_mvm_min: number;
+  sample_count: number;
+}
+interface PhysicalDriverThresholdStat {
+  id: string;
+  event_type: string;
+  threshold: string;
+  unit: string;
+  count: number;
+  total_duration_minutes: number;
+  longest_interval_minutes: number;
+  peak_value: number | null;
+  peak_kind: 'maximum' | 'minimum';
+  integrated_value_minutes: number | null;
+  first_occurrence: string | null;
+  last_occurrence: string | null;
+  strongest_event: PhysicalDriverIntervalSummary | null;
+}
+interface PhysicalDriverCompoundStat {
+  id: string;
+  event_type: string;
+  threshold: string;
+  count: number;
+  total_duration_minutes: number;
+  longest_interval_minutes: number;
+  peak_drivers: {
+    max_vsw: number | null;
+    min_bz: number | null;
+    max_bt: number | null;
+    max_np: number | null;
+    max_pdyn: number | null;
+    max_em: number | null;
+  };
+  strongest_event: PhysicalDriverIntervalSummary | null;
+  strongest_event_summary: string | null;
+}
+interface PhysicalDriverOccurrenceStrip {
+  id: string;
+  label: string;
+  color: string;
+  intervals: Array<{ start_ms: number; end_ms: number; level: number }>;
+}
+interface PhysicalDriverStatsDto {
+  generated_at: string;
+  window: string;
+  start_ms: number;
+  end_ms: number;
+  source: 'propagated_l1_samples';
+  target: 'earth_bow_shock_nose';
+  sample_count: number;
+  cadence_minutes: number;
+  stats: {
+    speed: PhysicalDriverThresholdStat[];
+    bz: PhysicalDriverThresholdStat[];
+    bt: PhysicalDriverThresholdStat[];
+    density: PhysicalDriverThresholdStat[];
+    pdyn: PhysicalDriverThresholdStat[];
+    em: PhysicalDriverThresholdStat[];
+    compound: PhysicalDriverCompoundStat[];
+  };
+  summary: {
+    strongest_southward_bz: PhysicalDriverIntervalSummary | null;
+    strongest_high_speed: PhysicalDriverIntervalSummary | null;
+    strongest_pressure: PhysicalDriverIntervalSummary | null;
+    strongest_coupling: PhysicalDriverIntervalSummary | null;
+    total_hazardous_minutes: number;
+  };
+  occurrence_strips: PhysicalDriverOccurrenceStrip[];
+  limitations: string[];
+}
+
+const PHYSICAL_DRIVER_WINDOWS: Array<{ key: string; label: string }> = [
+  { key: '24h', label: '24 h' },
+  { key: '7d', label: '7 d' },
+  { key: '30d', label: '30 d' },
+  { key: '90d', label: '90 d' },
+  { key: '1y', label: '1 y' },
+];
+
+function fmtDurationMinutes(minutes: number | null | undefined) {
+  if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) return '—';
+  if (minutes < 90) return `${Math.round(minutes)} min`;
+  const hours = minutes / 60;
+  if (hours < 48) return `${hours.toFixed(hours < 10 ? 1 : 0)} h`;
+  return `${(hours / 24).toFixed(hours < 240 ? 1 : 0)} d`;
+}
+
+function fmtDriverPeak(row: PhysicalDriverThresholdStat | PhysicalDriverCompoundStat) {
+  if ('peak_value' in row) {
+    if (row.peak_value === null) return '—';
+    const digits = row.unit === 'nPa' || row.unit === 'mV/m' ? 2 : row.unit === 'cm^-3' ? 1 : 0;
+    return `${row.peak_value.toFixed(digits)} ${row.unit}`;
+  }
+  const p = row.peak_drivers;
+  const parts = [
+    p.max_vsw !== null ? `${p.max_vsw.toFixed(0)} km/s` : null,
+    p.min_bz !== null ? `Bz ${p.min_bz.toFixed(1)} nT` : null,
+    p.max_em !== null ? `Em ${p.max_em.toFixed(2)}` : null,
+    p.max_pdyn !== null ? `Pdyn ${p.max_pdyn.toFixed(2)}` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : '—';
+}
+
+function fmtIntervalRange(interval: PhysicalDriverIntervalSummary | null, timeZone: string, tzLabel: string) {
+  if (!interval) return '—';
+  return `${fmtDateTime(interval.start_time, timeZone)} → ${fmtClock(interval.end_time, timeZone)} ${tzLabel}`;
+}
+
 function fmtDateOnly(iso: string | null) {
   if (!iso) return 'missing';
   const ms = new Date(iso).getTime();
@@ -1299,8 +1790,8 @@ function ValidationDataUsedPanel() {
         {data && <span className="font-mono text-[10px] text-slate-500">snapshot {fmtDateTime(data.generatedAtUtc, 'UTC')} UTC</span>}
       </div>
       <p className="mb-3 max-w-4xl text-[11px] leading-relaxed text-slate-500">
-        Validation uses different datasets for different jobs: ACE is the historical upstream L1 input, OMNI is the near-Earth/time-shifted truth,
-        GOES/GEO is response context, and Kp/G is only a response proxy label. None of these turns GOES or Kp into a direct L1 solar-wind measurement.
+        Validation uses different datasets for different jobs: ACE is the historical upstream L1 input, OMNI is an internal Earth&apos;s bow-shock nose timing reference,
+        GOES/GEO is response context, and Kp/G is a ground geomagnetic response label. None of these turns GOES or Kp into a direct L1 solar-wind measurement.
       </p>
 
       {loading && !data ? (
@@ -1311,7 +1802,7 @@ function ValidationDataUsedPanel() {
         <div className="flex flex-col gap-3">
           <div className="grid gap-2 lg:grid-cols-3">
             <ArchiveTile title="ACE upstream L1" archive={data.archives.ace} accent="#22d3ee" />
-            <ArchiveTile title="OMNI near-Earth truth" archive={data.archives.omni} accent="#fb923c" />
+            <ArchiveTile title="OMNI bow-shock reference" archive={data.archives.omni} accent="#fb923c" />
             <ArchiveTile title="GOES/GEO context" archive={data.archives.geo} accent="#a78bfa" />
           </div>
           <div className="overflow-hidden rounded-md border border-slate-800">
@@ -1358,8 +1849,203 @@ function ValidationDataUsedPanel() {
           <div className="flex gap-2 rounded-md border border-cyan-400/20 bg-cyan-400/[0.04] p-3 text-[10px] leading-relaxed text-slate-400">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden="true" />
             <p>
-              Key limitation: OMNI is the historical near-Earth/time-shifted truth for solar-wind variables; Kp/G is a ground response index; GOES/GEO
+              Key limitation: OMNI is the historical Earth&apos;s bow-shock nose timing reference for solar-wind variables; Kp/G is a ground geomagnetic response index; GOES/GEO
               describes spacecraft-environment response context. They validate different parts of the chain and should not be mixed as the same target.
+            </p>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function PhysicalDriverSummaryTile({ label, interval, metric, accent }: { label: string; interval: PhysicalDriverIntervalSummary | null; metric: ReactNode; accent: string }) {
+  const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-950/45 p-3">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">{label}</span>
+        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: accent }} />
+      </div>
+      <div className="font-mono text-lg font-semibold text-slate-100">{metric}</div>
+      <div className="mt-1 truncate font-mono text-[9px] text-slate-500" title={fmtIntervalRange(interval, timeZone, tzLabel)}>
+        {fmtIntervalRange(interval, timeZone, tzLabel)}
+      </div>
+    </div>
+  );
+}
+
+function PhysicalDriverOccurrenceStrips({ strips, startMs, endMs }: { strips: PhysicalDriverOccurrenceStrip[]; startMs: number; endMs: number }) {
+  const span = Math.max(1, endMs - startMs);
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">Event occurrence strip · by physical-driver category</span>
+        <span className="font-mono text-[9px] text-slate-600">arrival time at Earth&apos;s bow-shock nose</span>
+      </div>
+      <div className="space-y-1.5">
+        {strips.map(strip => (
+          <div key={strip.id} className="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2">
+            <span className="truncate font-mono text-[9px] uppercase tracking-widest text-slate-500">{strip.label}</span>
+            <div className="relative h-3 overflow-hidden rounded-sm border border-slate-800 bg-slate-900/60">
+              {strip.intervals.map((interval, i) => {
+                const left = clamp01((interval.start_ms - startMs) / span) * 100;
+                const right = clamp01((interval.end_ms - startMs) / span) * 100;
+                return (
+                  <span
+                    key={`${strip.id}-${i}`}
+                    className="absolute top-0 h-full"
+                    style={{ left: `${left}%`, width: `${Math.max(0.4, right - left)}%`, backgroundColor: strip.color, opacity: Math.min(0.95, 0.35 + interval.level * 0.13) }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PhysicalDriverStatsTable({ rows }: { rows: Array<PhysicalDriverThresholdStat | PhysicalDriverCompoundStat> }) {
+  const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
+  return (
+    <div className="overflow-x-auto rounded-md border border-slate-800">
+      <table className="w-full min-w-[780px] border-collapse font-mono text-[10px]">
+        <thead>
+          <tr className="bg-slate-950/60 text-slate-500">
+            <th className="px-2 py-1.5 text-left font-medium">Event type</th>
+            <th className="px-2 py-1.5 text-left font-medium">Threshold</th>
+            <th className="px-2 py-1.5 text-right font-medium">Count</th>
+            <th className="px-2 py-1.5 text-right font-medium">Total duration</th>
+            <th className="px-2 py-1.5 text-right font-medium">Longest</th>
+            <th className="px-2 py-1.5 text-right font-medium">Peak value</th>
+            <th className="px-2 py-1.5 text-left font-medium">Strongest event time range</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr><td colSpan={7} className="px-2 py-5 text-center text-slate-600">No physical-driver interval rows available.</td></tr>
+          ) : rows.map(row => (
+            <tr key={row.id} className="border-t border-slate-800/70 text-slate-300">
+              <td className="px-2 py-1.5 text-cyan-100">{row.event_type}</td>
+              <td className="px-2 py-1.5 text-slate-500">{row.threshold}</td>
+              <td className="px-2 py-1.5 text-right text-slate-300">{row.count.toLocaleString()}</td>
+              <td className="px-2 py-1.5 text-right text-slate-400">{fmtDurationMinutes(row.total_duration_minutes)}</td>
+              <td className="px-2 py-1.5 text-right text-slate-400">{fmtDurationMinutes(row.longest_interval_minutes)}</td>
+              <td className="px-2 py-1.5 text-right text-slate-200">{fmtDriverPeak(row)}</td>
+              <td className="px-2 py-1.5 text-slate-500">{fmtIntervalRange(row.strongest_event, timeZone, tzLabel)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function fmtPhysicalSummaryMetric(interval: PhysicalDriverIntervalSummary | null, key: keyof Pick<PhysicalDriverIntervalSummary, 'min_bz' | 'max_vsw' | 'max_pdyn' | 'max_em'>, unit: string, digits: number) {
+  const value = interval?.[key];
+  return value === null || value === undefined || !Number.isFinite(value) ? '—' : `${value.toFixed(digits)} ${unit}`;
+}
+
+function PhysicalDriverEventStatsPanel() {
+  const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
+  const [windowKey, setWindowKey] = useState('90d');
+  const [stats, setStats] = useState<PhysicalDriverStatsDto | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (key: string) => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/console/physical-driver-stats?window=${key}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      const b = await r.json() as PhysicalDriverStatsDto | { error?: string };
+      if (r.ok) {
+        setStats(b as PhysicalDriverStatsDto);
+        setError(null);
+      } else {
+        setError((b as { error?: string }).error ?? 'Could not compute physical-driver statistics.');
+      }
+    } catch {
+      setError('Could not compute physical-driver statistics.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { const t = window.setTimeout(() => void load(windowKey), 0); return () => window.clearTimeout(t); }, [load, windowKey]);
+
+  const rows = useMemo(() => {
+    if (!stats) return [] as Array<PhysicalDriverThresholdStat | PhysicalDriverCompoundStat>;
+    const pick = (items: PhysicalDriverThresholdStat[], ids: string[]) => ids.map(id => items.find(item => item.id === id)).filter((item): item is PhysicalDriverThresholdStat => !!item);
+    const compoundIds = ['compound_high_coupling', 'compound_geoeffective_southward'];
+    return [
+      ...pick(stats.stats.speed, ['speed_elevated', 'speed_high']),
+      ...pick(stats.stats.bz, ['bz_moderate_southward', 'bz_strong_southward', 'bz_severe_southward']),
+      ...pick(stats.stats.bt, ['bt_elevated', 'bt_high']),
+      ...pick(stats.stats.density, ['density_elevated', 'density_high']),
+      ...pick(stats.stats.pdyn, ['pdyn_elevated', 'pdyn_high']),
+      ...pick(stats.stats.em, ['em_elevated', 'em_high', 'em_severe']),
+      ...compoundIds.map(id => stats.stats.compound.find(item => item.id === id)).filter((item): item is PhysicalDriverCompoundStat => !!item),
+    ];
+  }, [stats]);
+
+  return (
+    <section className="rounded-lg border border-slate-800 bg-slate-950/30 p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Gauge className="h-4 w-4 text-cyan-300" aria-hidden="true" />
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-300">Physical-driver event statistics</h2>
+            <p className="mt-0.5 max-w-4xl text-[11px] leading-relaxed text-slate-500">
+              Physical in-situ variables measured at L1 and shifted to estimated Earth&apos;s bow-shock nose arrival time. These count hazardous driver intervals, not guaranteed satellite anomalies or measured G-levels.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex overflow-hidden rounded-md border border-slate-700/60">
+            {PHYSICAL_DRIVER_WINDOWS.map(w => (
+              <button
+                key={w.key}
+                type="button"
+                onClick={() => setWindowKey(w.key)}
+                className={`border-r border-slate-700/60 px-2 py-1 font-mono text-[9px] uppercase tracking-widest transition last:border-r-0 ${windowKey === w.key ? 'bg-cyan-400/15 text-cyan-100' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" aria-hidden="true" />}
+        </div>
+      </div>
+
+      {error ? (
+        <div className="rounded-md border border-amber-400/25 bg-amber-400/[0.06] p-3 font-mono text-[10px] uppercase tracking-widest text-amber-200/80">{error}</div>
+      ) : loading && !stats ? (
+        <div className="flex h-36 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Computing physical-driver intervals…</div>
+      ) : stats ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[9px] uppercase tracking-widest text-slate-500">
+            <span>{fmtDateTime(new Date(stats.start_ms).toISOString(), timeZone)} → {fmtDateTime(new Date(stats.end_ms).toISOString(), timeZone)} {tzLabel}</span>
+            <span>{stats.sample_count.toLocaleString()} samples · cadence ≈ {stats.cadence_minutes} min · generated {fmtDateTime(stats.generated_at, timeZone)} {tzLabel}</span>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+            <PhysicalDriverSummaryTile label="Strongest southward Bz" interval={stats.summary.strongest_southward_bz} metric={fmtPhysicalSummaryMetric(stats.summary.strongest_southward_bz, 'min_bz', 'nT', 1)} accent="#fb923c" />
+            <PhysicalDriverSummaryTile label="Strongest high-speed stream" interval={stats.summary.strongest_high_speed} metric={fmtPhysicalSummaryMetric(stats.summary.strongest_high_speed, 'max_vsw', 'km/s', 0)} accent="#fbbf24" />
+            <PhysicalDriverSummaryTile label="Strongest dynamic pressure" interval={stats.summary.strongest_pressure} metric={fmtPhysicalSummaryMetric(stats.summary.strongest_pressure, 'max_pdyn', 'nPa', 2)} accent="#a78bfa" />
+            <PhysicalDriverSummaryTile label="Strongest coupling" interval={stats.summary.strongest_coupling} metric={fmtPhysicalSummaryMetric(stats.summary.strongest_coupling, 'max_em', 'mV/m', 2)} accent="#f87171" />
+            <div className="rounded-md border border-cyan-400/25 bg-cyan-400/[0.05] p-3">
+              <div className="font-mono text-[9px] uppercase tracking-widest text-cyan-200">Total hazardous minutes</div>
+              <div className="mt-1 font-mono text-lg font-semibold text-cyan-100">{fmtDurationMinutes(stats.summary.total_hazardous_minutes)}</div>
+              <div className="mt-1 font-mono text-[9px] text-slate-500">union of elevated physical-driver intervals</div>
+            </div>
+          </div>
+          <PhysicalDriverOccurrenceStrips strips={stats.occurrence_strips} startMs={stats.start_ms} endMs={stats.end_ms} />
+          <PhysicalDriverStatsTable rows={rows} />
+          <div className="flex gap-2 rounded-md border border-slate-800 bg-slate-950/45 p-3 text-[10px] leading-relaxed text-slate-500">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden="true" />
+            <p>
+              {stats.limitations.join(' ')} The G row elsewhere in the console is a derived risk indicator; this section summarizes solar-wind and IMF drivers directly.
             </p>
           </div>
         </div>
@@ -1439,7 +2125,7 @@ function ArrivalAccuracyCard() {
       </div>
       <p className="mb-3 max-w-3xl text-[11px] leading-relaxed text-slate-500">
         A solar-wind parcel is seen upstream; MRU predicts <span className="text-slate-300">when</span> it reaches Earth (lag = L1 distance ÷ speed).
-        We re-detect that same parcel arriving near Earth (OMNI) and measure how many <span className="text-slate-300">minutes</span> off the prediction
+        We re-detect that same parcel in the Earth&apos;s bow-shock nose timing reference (OMNI) and measure how many <span className="text-slate-300">minutes</span> off the prediction
         was. The headline stats span <span className="text-slate-300">several years</span> of OMNI; the chart below zooms one storm (May 2024 G5) as a worked example.
       </p>
 
@@ -1631,8 +2317,20 @@ interface NowcastDto {
   startMs: number;
   distanceKm: number;
   l1: Array<{ t: number; speed: number | null; bz: number | null; density: number | null }>;
-  mru: Array<{ t: number; speed: number | null; bz: number | null; gLevel: number }>;
-  current: { sampleTimeUtc: string; speedKmS: number | null; bzNt: number | null; densityPerCm3: number | null; gLevel: number; arrivalUtc: string | null; lagMinutes: number | null } | null;
+  mru: Array<{ t: number; speed: number | null; bz: number | null; gLevel: number | null; riskAvailable?: boolean }>;
+  current: {
+    sampleTimeUtc: string;
+    speedKmS: number | null;
+    bzNt: number | null;
+    densityPerCm3: number | null;
+    gLevel: number | null;
+    riskAvailable?: boolean;
+    sources?: TransitSources;
+    missingVariables?: string[];
+    qualityFlags?: string[];
+    arrivalUtc: string | null;
+    lagMinutes: number | null;
+  } | null;
   inbound: { peakG: number; peakSpeed: number; minBz: number; leadMinutes: number; worstEtaUtc: string } | null;
   warning: string | null;
 }
@@ -1706,7 +2404,8 @@ function NowcastPanel() {
   const cur = dto?.current ?? null;
   const inb = dto?.inbound ?? null;
   const leadMin = dto && dto.mru.length ? Math.max(0, Math.round((Math.max(...dto.mru.map(p => p.t), dto.now) - dto.now) / 60000)) : 0;
-  const curStyle = cur ? dangerStyle(cur.gLevel) : DANGER[0];
+  const curRiskAvailable = cur?.riskAvailable ?? (cur ? cur.gLevel !== null : false);
+  const curStyle = cur && curRiskAvailable ? dangerStyle(cur.gLevel ?? 0) : DANGER[0];
   const inbStyle = inb ? dangerStyle(inb.peakG) : DANGER[0];
 
   return (
@@ -1728,10 +2427,10 @@ function NowcastPanel() {
 
       {/* Live + predicted alert strip */}
       <div className="mb-3 grid gap-2 sm:grid-cols-2">
-        <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 ${curStyle.chip}`}>
+        <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 ${cur && curRiskAvailable ? curStyle.chip : 'border-slate-700/60 bg-slate-900/40 text-slate-400'}`} title={cur ? `Sources: ${sourceLabel(cur.sources?.gLevel)}\nMissing variables: ${formatMissingVariables(cur.missingVariables ?? [])}\nQuality flags: ${formatFlags(cur.qualityFlags ?? [])}` : undefined}>
           <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest">
             <span className="text-slate-400">Latest L1 sample</span>
-            {cur ? <GTag level={cur.gLevel} code={`G${cur.gLevel}`} /> : <span className="text-slate-500">—</span>}
+            {cur && curRiskAvailable ? <GTag level={cur.gLevel ?? 0} code={`G${cur.gLevel ?? 0}`} /> : <span className="text-slate-500">risk unavailable</span>}
           </span>
           <span className="font-mono text-[10px] text-slate-300">
             {cur ? <>{fmtNum(cur.speedKmS, 0)} km/s · Bz {fmtNum(cur.bzNt, 1)} nT</> : 'no L1 sample'}
@@ -1740,10 +2439,10 @@ function NowcastPanel() {
         <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 ${inb ? inbStyle.chip : 'border-slate-700/60 text-slate-400'}`}>
           <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest">
             <span className="text-slate-400">Strongest inbound sample</span>
-            {inb ? <GTag level={inb.peakG} code={`G${inb.peakG}`} /> : <span className="text-slate-500">quiet</span>}
+            {inb ? <GTag level={inb.peakG} code={`G${inb.peakG}`} /> : <span className="text-slate-500">risk unavailable</span>}
           </span>
           <span className="font-mono text-[10px] text-slate-300">
-            {inb ? <>ETA {fmtClock(inb.worstEtaUtc, timeZone)} {tzLabel} · {inb.peakSpeed} km/s</> : `nothing elevated in next ${leadMin} min`}
+            {inb ? <>ETA {fmtClock(inb.worstEtaUtc, timeZone)} {tzLabel} · {inb.peakSpeed} km/s</> : `no derivable G-risk in next ${leadMin} min`}
           </span>
         </div>
       </div>
@@ -1759,7 +2458,7 @@ function NowcastPanel() {
         <div className="flex h-32 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Reading L1 feed…</div>
       )}
       <p className="mt-3 max-w-3xl text-[10px] leading-relaxed text-slate-500">
-        Latest L1 sample = what DSCOVR is measuring upstream now; strongest inbound sample = the worst already-measured parcel still travelling to Earth.
+        Latest L1 sample = the active RTSW L1 source upstream now; strongest inbound sample = the worst already-measured parcel still travelling to Earth.
         Solid lines are upstream measurements; dashed lines are those same measurements shifted to their estimated Earth-arrival time (~{leadMin} min lead).
       </p>
     </section>
@@ -2203,6 +2902,7 @@ export function ConsoleScreen() {
             {view === 'training' ? <TrainingDataPanel /> : view === 'validation' ? (<>
             {/* Validation studies: data inventory + arrival-time accuracy + historical hindcast */}
             <ValidationDataUsedPanel />
+            <PhysicalDriverEventStatsPanel />
             <ArrivalAccuracyCard />
             <BacktestPanel />
             </>) : (<>

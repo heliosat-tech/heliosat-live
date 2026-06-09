@@ -53,17 +53,17 @@ const SOURCE: ForecastSourceV1 = {
 
 const TARGET: ForecastTargetV1 = {
   id: 'near_earth_bow_shock',
-  description: 'Estimated solar-wind and IMF conditions at the near-Earth bow-shock environment.',
+  description: "Estimated solar-wind and IMF conditions at Earth's bow-shock nose.",
 };
 
 const LIMITATIONS = [
-  'Ballistic MRU propagation assumes each L1 parcel keeps the measured bulk speed until near-Earth arrival.',
+  "Ballistic MRU propagation assumes each L1 parcel keeps the measured bulk speed until Earth's bow-shock nose arrival.",
   'Arrival time is uncertain because phase-front orientation, acceleration, stream interaction and bow-shock geometry are simplified.',
   'Estimated G level is an operational proxy derived from propagated physical drivers; it is not an official measured Kp/G value.',
 ];
 
-const gLevel = (speed: number | null, bz: number | null) =>
-  classifyGFromKp(kpFromCoupling(mergingFieldMvM(speed, bz), speed)).level;
+const estimatedGLevel = (speed: number | null, bz: number | null) =>
+  speed !== null && bz !== null ? classifyGFromKp(kpFromCoupling(mergingFieldMvM(speed, bz), speed)).level : null;
 
 function finite(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -255,6 +255,7 @@ function leadTimeMinutes(arrivalUtc: string | null, issuedAt: string): number | 
 }
 
 function estimatedGLevelProxy(speedKmS: number | null, bzNt: number | null): EstimatedGLevelProxyV1 | null {
+  if (speedKmS === null || bzNt === null) return null;
   const estimate = estimateKpFromSolarWind(speedKmS, bzNt);
   if (!estimate) return null;
   const scale = classifyGFromKp(estimate.kp);
@@ -278,14 +279,24 @@ export interface RealtimeForecast {
   confidence: ForecastConfidence;
   derivedFeatures: ForecastDerivedFeaturesV1 | null;
   l1: Array<{ t: number; speed: number | null; bz: number | null; density: number | null }>;
-  mru: Array<{ t: number; speed: number | null; bz: number | null; gLevel: number }>;
+  mru: Array<{ t: number; speed: number | null; bz: number | null; gLevel: number | null; riskAvailable: boolean }>;
   current: {
     sampleTimeUtc: string;
     speedKmS: number | null;
     bzNt: number | null;
     btNt: number | null;
     densityPerCm3: number | null;
-    gLevel: number;
+    gLevel: number | null;
+    riskAvailable: boolean;
+    sources: {
+      speedKmS: string | null;
+      bzNt: string | null;
+      btNt: string | null;
+      densityPerCm3: string | null;
+      gLevel: string | null;
+    };
+    missingVariables: string[];
+    qualityFlags: string[];
     arrivalUtc: string | null;
     lagMinutes: number | null;
   } | null;
@@ -311,7 +322,10 @@ export async function computeRealtimeForecast(): Promise<RealtimeForecast> {
   const asL1: L1Sample[] = samples.map(asL1Sample);
   const propagated = propagateL1Series(asL1, history.distanceKm);
   const mru = propagated
-    .map(p => ({ t: new Date(p.arrivalTimeUtc).getTime(), speed: p.speedKmS, bz: p.bzNt, gLevel: gLevel(p.speedKmS, p.bzNt) }))
+    .map(p => {
+      const gLevel = estimatedGLevel(p.speedKmS, p.bzNt);
+      return { t: new Date(p.arrivalTimeUtc).getTime(), speed: p.speedKmS, bz: p.bzNt, gLevel, riskAvailable: gLevel !== null };
+    })
     .filter(p => p.t >= start);
 
   const last = samples.length ? samples[samples.length - 1] : null;
@@ -334,19 +348,31 @@ export async function computeRealtimeForecast(): Promise<RealtimeForecast> {
         bzNt: last.bzNt,
         btNt: last.btNt,
         densityPerCm3: last.densityPerCm3,
-        gLevel: gLevel(last.speedKmS, last.bzNt),
+        gLevel: estimatedGLevel(last.speedKmS, last.bzNt),
+        riskAvailable: last.riskAvailable ?? (last.speedKmS !== null && last.bzNt !== null),
+        sources: {
+          speedKmS: last.sourceLabelByVariable?.speed ?? null,
+          bzNt: last.sourceLabelByVariable?.bz ?? null,
+          btNt: last.sourceLabelByVariable?.bt ?? null,
+          densityPerCm3: last.sourceLabelByVariable?.density ?? null,
+          gLevel: (last.riskAvailable ?? (last.speedKmS !== null && last.bzNt !== null))
+            ? Array.from(new Set([last.sourceLabelByVariable?.speed, last.sourceLabelByVariable?.bz].filter((label): label is string => !!label))).join(' + ') || null
+            : null,
+        },
+        missingVariables: last.missingVariables ?? [],
+        qualityFlags: last.qualityFlags ?? [],
         arrivalUtc: latestProp?.arrivalTimeUtc ?? null,
         lagMinutes: latestProp ? Math.round(latestProp.lagMinutes) : null,
       }
     : null;
 
   // Inbound = forecast parcels whose Earth-arrival is still in the future.
-  const inboundPts = mru.filter(p => p.t >= now);
+  const inboundPts = mru.filter(p => p.t >= now && p.riskAvailable && p.gLevel !== null);
   let inbound: RealtimeForecast['inbound'] = null;
   if (inboundPts.length > 0) {
-    const worst = inboundPts.reduce((a, b) => (b.gLevel > a.gLevel ? b : a), inboundPts[0]);
+    const worst = inboundPts.reduce((a, b) => ((b.gLevel ?? 0) > (a.gLevel ?? 0) ? b : a), inboundPts[0]);
     inbound = {
-      peakG: Math.max(...inboundPts.map(p => p.gLevel)),
+      peakG: Math.max(...inboundPts.map(p => p.gLevel ?? 0)),
       peakSpeed: Math.round(Math.max(...inboundPts.map(p => p.speed ?? 0))),
       minBz: Math.round(Math.min(...inboundPts.map(p => p.bz ?? 0))),
       leadMinutes: Math.round((inboundPts[inboundPts.length - 1].t - now) / MIN),
@@ -402,7 +428,7 @@ export function toForecastRealtimeV1(forecast: RealtimeForecast, issuedAt: strin
           speed_km_s: current.speedKmS,
           bz_nt: current.bzNt,
           density_p_cm3: current.densityPerCm3,
-          g_level: current.gLevel,
+          g_level: current.gLevel ?? 0,
         }
       : null,
     arrival: current

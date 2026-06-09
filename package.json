@@ -6,7 +6,9 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ./scripts/test-register.mjs --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

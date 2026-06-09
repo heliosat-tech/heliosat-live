@@ -104,7 +104,7 @@ export async function GET() {
           metrics: ['bias', 'MAE', 'RMSE', 'p90 absolute error', 'within tolerance'],
         },
         variableAlignment: {
-          role: 'Propagates ACE upstream L1 samples and compares speed, density, |B| and Bz against OMNI near-Earth truth at arrival time.',
+          role: "Propagates ACE upstream L1 samples and compares speed, density, |B| and Bz against the OMNI Earth's bow-shock nose timing reference at arrival time.",
           metrics: ['MAE', 'RMSE', 'bias', 'correlation'],
         },
         gProxy: {

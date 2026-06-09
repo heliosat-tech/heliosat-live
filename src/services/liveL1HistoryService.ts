@@ -6,18 +6,38 @@
  */
 
 import type { L1EventSample } from './liveEventService';
+import {
+  resolvePhysicalDriverSample,
+  type PhysicalDriverCandidate,
+  type PhysicalDriverSourceId,
+  type PhysicalDriverVariable,
+} from './physicalDriverResolutionService';
 
 const MAG_7DAY = 'https://services.swpc.noaa.gov/products/solar-wind/mag-7-day.json';
 const PLASMA_7DAY = 'https://services.swpc.noaa.gov/products/solar-wind/plasma-7-day.json';
 const EPHEMERIS = 'https://services.swpc.noaa.gov/products/solar-wind/ephemerides.json';
 const REQUEST_TIMEOUT_MS = 12000;
+const LIVE_ALIGNMENT_TOLERANCE_MS = 2 * 60 * 1000;
+const ACTIVE_RTSW_SOURCE_LABEL = 'L1 · active RTSW';
 
 const NOMINAL_L1_DISTANCE_KM = 1_500_000;
 const MIN_RELIABLE_KM = 500_000;
 const MAX_RELIABLE_KM = 2_500_000;
 
+export interface ResolvedL1EventSample extends L1EventSample {
+  sourceByVariable: Record<PhysicalDriverVariable, PhysicalDriverSourceId | null>;
+  sourceLabelByVariable: Record<PhysicalDriverVariable, string | null>;
+  sourceTimeByVariable: Record<PhysicalDriverVariable, string | null>;
+  missingVariables: PhysicalDriverVariable[];
+  qualityFlags: string[];
+  riskAvailable: boolean;
+  pdynNpa: number | null;
+  emMvM: number | null;
+  estimatedGLevel: number | null;
+}
+
 export interface L1HistoryResult {
-  samples: L1EventSample[];
+  samples: ResolvedL1EventSample[];
   distanceKm: number;
   distanceIsMeasured: boolean;
   errorMessage: string | null;
@@ -80,31 +100,36 @@ export async function fetchLiveL1History(): Promise<L1HistoryResult> {
     const speedIdx = plasmaCols.speed ?? -1;
     const densityIdx = plasmaCols.density ?? -1;
 
-    const magByMinute = new Map<number, { bz: number | null; bt: number | null }>();
+    const candidates: PhysicalDriverCandidate[] = [];
     for (let i = 1; i < mag.length; i += 1) {
       const row = mag[i];
       if (!Array.isArray(row)) continue;
       const ms = parseMs(row[0]);
       if (Number.isNaN(ms)) continue;
-      magByMinute.set(minuteKey(ms), {
-        bz: bzIdx >= 0 ? toNum(row[bzIdx]) : null,
-        bt: btIdx >= 0 ? toNum(row[btIdx]) : null,
+      candidates.push({
+        timeMs: minuteKey(ms),
+        observedMs: ms,
+        sourceId: 'swpc_rtsw',
+        sourceLabel: ACTIVE_RTSW_SOURCE_LABEL,
+        priority: 1,
+        bzGsmNt: bzIdx >= 0 ? toNum(row[bzIdx]) : null,
+        btNt: btIdx >= 0 ? toNum(row[btIdx]) : null,
       });
     }
 
-    const samples: L1EventSample[] = [];
     for (let i = 1; i < plasma.length; i += 1) {
       const row = plasma[i];
       if (!Array.isArray(row)) continue;
       const ms = parseMs(row[0]);
       if (Number.isNaN(ms)) continue;
-      const mag = magByMinute.get(minuteKey(ms));
-      samples.push({
-        ms,
+      candidates.push({
+        timeMs: minuteKey(ms),
+        observedMs: ms,
+        sourceId: 'swpc_rtsw',
+        sourceLabel: ACTIVE_RTSW_SOURCE_LABEL,
+        priority: 1,
         speedKmS: speedIdx >= 0 ? toNum(row[speedIdx]) : null,
-        densityPerCm3: densityIdx >= 0 ? toNum(row[densityIdx]) : null,
-        bzNt: mag?.bz ?? null,
-        btNt: mag?.bt ?? null,
+        densityCm3: densityIdx >= 0 ? toNum(row[densityIdx]) : null,
       });
     }
 
@@ -130,6 +155,31 @@ export async function fetchLiveL1History(): Promise<L1HistoryResult> {
         }
       }
     }
+
+    const targetTimes = [...new Set(candidates.map(candidate => candidate.timeMs))]
+      .filter(ms => Number.isFinite(ms))
+      .sort((a, b) => a - b);
+    const samples = targetTimes
+      .map((ms): ResolvedL1EventSample => {
+        const resolved = resolvePhysicalDriverSample(ms, candidates, { toleranceMs: LIVE_ALIGNMENT_TOLERANCE_MS });
+        return {
+          ms,
+          speedKmS: resolved.speedKmS,
+          densityPerCm3: resolved.densityCm3,
+          bzNt: resolved.bzGsmNt,
+          btNt: resolved.btNt,
+          sourceByVariable: resolved.sourceByVariable,
+          sourceLabelByVariable: resolved.sourceLabelByVariable,
+          sourceTimeByVariable: resolved.sourceTimeByVariable,
+          missingVariables: resolved.missingVariables,
+          qualityFlags: resolved.qualityFlags,
+          riskAvailable: resolved.riskAvailable,
+          pdynNpa: resolved.derived.pdynNpa,
+          emMvM: resolved.derived.emMvM,
+          estimatedGLevel: resolved.derived.estimatedGLevel,
+        };
+      })
+      .filter(sample => sample.speedKmS !== null || sample.bzNt !== null || sample.btNt !== null || sample.densityPerCm3 !== null);
 
     return { samples, distanceKm, distanceIsMeasured, errorMessage: null };
   } catch (error) {
