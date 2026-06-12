@@ -1611,6 +1611,13 @@ interface ValidationDataDto {
       role: string;
       metrics: string[];
     };
+    mlArrival: {
+      role: string;
+      train: { startUtc: string; endUtc: string; rows: number };
+      validation: { startUtc: string; endUtc: string; rows: number };
+      generatedAtUtc: string | null;
+      metrics: string[];
+    } | null;
     timingDistribution: { coverage: { startUtc: string; stopUtc: string } | null; samples: number | null; role: string; metrics: string[] };
     variableAlignment: { role: string; metrics: string[] };
     gProxy: { role: string; metrics: string[]; caveat: string };
@@ -2012,6 +2019,17 @@ function ValidationDataUsedBody() {
                     {studies?.arrivalTiming.samples ? ` · ${studies.arrivalTiming.samples.toLocaleString()} samples` : ''}
                   </td>
                   <td className="px-2 py-1.5 text-slate-500">{studies?.arrivalTiming.metrics.join(', ')}</td>
+                </tr>
+                <tr className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-2 py-1.5 font-mono text-cyan-200">ML arrival-time correction</td>
+                  <td className="px-2 py-1.5 text-slate-400">{studies?.mlArrival?.role ?? 'Learned residual correction on top of the MRU ballistic delay.'}</td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500">
+                    {studies?.mlArrival
+                      ? <>train {fmtDateOnly(studies.mlArrival.train.startUtc)} → {fmtDateOnly(studies.mlArrival.train.endUtc)} · {studies.mlArrival.train.rows.toLocaleString()} rows<br />
+                          validation {fmtDateOnly(studies.mlArrival.validation.startUtc)} → {fmtDateOnly(studies.mlArrival.validation.endUtc)} · {studies.mlArrival.validation.rows.toLocaleString()} rows</>
+                      : 'artifacts missing: run python -m ml.arrival_residual.train'}
+                  </td>
+                  <td className="px-2 py-1.5 text-slate-500">{studies?.mlArrival?.metrics.join(', ') ?? ''}</td>
                 </tr>
                 <tr className="border-t border-slate-800/70 text-slate-300">
                   <td className="px-2 py-1.5 font-mono text-cyan-200">Variable alignment</td>
