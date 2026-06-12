@@ -173,7 +173,8 @@ def fig_walkforward(metrics: dict) -> list[str]:
     ax.set_xlabel("validation year (trained on all earlier years)")
     ax.set_ylabel("mean absolute error (min)")
     ax.set_ylim(0, max(bench + ml) * 1.2)
-    ax.legend(loc="lower left")
+    # Legend above the axes: every in-plot corner is occupied by bars here.
+    ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncols=2, borderaxespad=0)
     ax.grid(axis="x", visible=False)
     return _save(fig, "walkforward_mae_by_year")
 
@@ -182,22 +183,48 @@ def fig_walkforward(metrics: dict) -> list[str]:
 
 OFF_AXIS_FEATURES = {"sc_y_re", "sc_z_re", "sc_ryz_re"}
 
+# Physical display labels for the report axes; raw artifact names stay in the JSON and
+# in the model card, where the exact column identity matters.
+FEATURE_TEX = {
+    "speed_km_s": "flow speed $V$",
+    "density_p_cc": "proton density $n_p$",
+    "bmag_nt": "field strength $|B|$",
+    "bz_gsm_nt": "$B_z$ (GSM)",
+    "by_gsm_nt": "$B_y$ (GSM)",
+    "pdyn_npa": "$P_\\mathrm{dyn}$",
+    "em_mv_m": "$E_m$ coupling",
+    "clock_angle_deg": "clock angle $\\theta_c$",
+    "sc_x_re": "s/c position $X$ (GSE)",
+    "sc_y_re": "s/c position $Y$ (GSE)",
+    "sc_z_re": "s/c position $Z$ (GSE)",
+    "sc_ryz_re": "s/c off-axis $\\sqrt{Y^2+Z^2}$",
+    "dist_re": "distance $X_\\mathrm{sc}-X_\\mathrm{BSN}$",
+    "mru_delay_min": "MRU ballistic delay",
+    "speed_mean_1h_km_s": "$\\langle V \\rangle_{1\\,\\mathrm{h}}$",
+    "speed_mean_3h_km_s": "$\\langle V \\rangle_{3\\,\\mathrm{h}}$",
+    "speed_std_3h_km_s": "$\\sigma(V)_{3\\,\\mathrm{h}}$",
+    "bz_mean_1h_nt": "$\\langle B_z \\rangle_{1\\,\\mathrm{h}}$",
+    "bz_mean_3h_nt": "$\\langle B_z \\rangle_{3\\,\\mathrm{h}}$",
+    "bz_std_3h_nt": "$\\sigma(B_z)_{3\\,\\mathrm{h}}$",
+}
+
 
 def fig_feature_importance(metrics: dict) -> list[str]:
     top = metrics["featureImportance"][:10][::-1]  # barh draws bottom-up
     names = [r["feature"] for r in top]
+    labels = [FEATURE_TEX.get(n, n) for n in names]
     values = [r["deltaMaeMin"] for r in top]
     errs = [r["std"] for r in top]
     off_axis = [r for r in metrics["featureImportance"][:10] if r["feature"] in OFF_AXIS_FEATURES]
     dominant = max(off_axis, key=lambda r: r["deltaMaeMin"])["feature"] if off_axis else None
     colors = [ORANGE if n == dominant else NAVY for n in names]
     fig, ax = plt.subplots(figsize=(WIDTH_IN, 3.4))
-    ax.barh(names, values, xerr=errs, color=colors, alpha=0.9, height=0.62,
+    ax.barh(labels, values, xerr=errs, color=colors, alpha=0.9, height=0.62,
             error_kw={"ecolor": "#555555", "elinewidth": 0.8, "capsize": 2})
     ax.set_xlabel("MAE increase when feature is permuted (min)")
     if dominant is not None:
         ax.legend(handles=[
-            Patch(color=ORANGE, alpha=0.9, label=f"{dominant}: spacecraft off-axis position"),
+            Patch(color=ORANGE, alpha=0.9, label="spacecraft off-axis position (dominant)"),
             Patch(color=NAVY, alpha=0.9, label="other upstream L1 features"),
         ], loc="lower right")
     ax.grid(axis="y", visible=False)
