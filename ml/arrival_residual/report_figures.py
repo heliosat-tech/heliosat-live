@@ -213,20 +213,27 @@ def _shade_g_bands(ax, bands: list[dict]) -> None:
                    color=NAVY, alpha=0.05 + 0.045 * band["level"], lw=0)
 
 
-def fig_worked_example(arrival: dict) -> list[str]:
+# Discrete per-level shading for the v2 variant: ColorBrewer "Purples" sequential scale.
+# Purple stays clearly apart from both series colors (navy lines, orange lines), unlike a
+# yellow-red severity ramp that would collide with the Em / forecast traces.
+G_LEVEL_FILL = {1: "#dadaeb", 2: "#bcbddc", 3: "#9e9ac8", 4: "#756bb1", 5: "#54278f"}
+G_FILL_ALPHA = 0.45
+
+
+def _shade_g_bands_leveled(ax, bands: list[dict]) -> None:
+    """Observed-G shading, one distinct color per level (v2 variant)."""
+    for band in bands:
+        ax.axvspan(_ms_to_dt(band["from"]), _ms_to_dt(band["to"]),
+                   color=G_LEVEL_FILL[band["level"]], alpha=G_FILL_ALPHA, lw=0)
+
+
+def _worked_example_series(arrival: dict) -> dict:
+    """All series the worked-example figure needs, shared by both variants."""
     actual = [p for p in arrival["actual"] if p["speed"] is not None]
     predicted = [p for p in arrival["predicted"] if p["speed"] is not None]
     bands = sorted(arrival["bands"], key=lambda b: b["from"])
 
-    t_act = [_ms_to_dt(p["t"]) for p in actual]
-    v_act = [p["speed"] for p in actual]
-    t_pred = [_ms_to_dt(p["t"]) for p in predicted]
-    v_pred = [p["speed"] for p in predicted]
-
     bz_pts = [p for p in actual if p["bz"] is not None]
-    t_bz = [_ms_to_dt(p["t"]) for p in bz_pts]
-    bz = [p["bz"] for p in bz_pts]
-    em = [p["speed"] * max(0.0, -p["bz"]) / 1000.0 for p in bz_pts]
 
     # Forecast-G overlay, identical to the console panel: trailing 3 h means of Em and
     # speed through the same strided series, then the Em->Kp anchors with the speed floor.
@@ -257,6 +264,28 @@ def fig_worked_example(arrival: dict) -> list[str]:
             if p["t"] < band["to"]:
                 lvl = max(lvl, band["level"])
         observed_g.append(lvl)
+
+    return {
+        "bands": bands,
+        "t_act": [_ms_to_dt(p["t"]) for p in actual],
+        "v_act": [p["speed"] for p in actual],
+        "t_pred": [_ms_to_dt(p["t"]) for p in predicted],
+        "v_pred": [p["speed"] for p in predicted],
+        "t_bz": [_ms_to_dt(p["t"]) for p in bz_pts],
+        "bz": [p["bz"] for p in bz_pts],
+        "em": [p["speed"] * max(0.0, -p["bz"]) / 1000.0 for p in bz_pts],
+        "forecast_g": forecast_g,
+        "observed_g": observed_g,
+    }
+
+
+def fig_worked_example(arrival: dict) -> list[str]:
+    series = _worked_example_series(arrival)
+    bands = series["bands"]
+    t_act, v_act = series["t_act"], series["v_act"]
+    t_pred, v_pred = series["t_pred"], series["v_pred"]
+    t_bz, bz, em = series["t_bz"], series["bz"], series["em"]
+    forecast_g, observed_g = series["forecast_g"], series["observed_g"]
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(WIDTH_IN, 7.0), sharex=True,
                                         gridspec_kw={"height_ratios": [1.2, 1.0, 0.8], "hspace": 0.12})
@@ -301,6 +330,71 @@ def fig_worked_example(arrival: dict) -> list[str]:
     return _save(fig, "worked_example_may2024_panels")
 
 
+def fig_worked_example_v2(arrival: dict) -> list[str]:
+    """Alternative styling of the worked example (same data, same panels):
+    - one distinct sequential color per observed G level instead of graded gray,
+      with an explicit G1..G5 patch legend above the figure;
+    - in-panel legends on a white frame and placed over empty regions, so no
+      swatch or label sits on top of the curves."""
+    series = _worked_example_series(arrival)
+    bands = series["bands"]
+    t_act, v_act = series["t_act"], series["v_act"]
+    t_pred, v_pred = series["t_pred"], series["v_pred"]
+    t_bz, bz, em = series["t_bz"], series["bz"], series["em"]
+    forecast_g, observed_g = series["forecast_g"], series["observed_g"]
+
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(WIDTH_IN, 7.0), sharex=True,
+                                        gridspec_kw={"height_ratios": [1.2, 1.0, 0.8], "hspace": 0.12})
+
+    legend_kw = {"frameon": True, "framealpha": 0.92, "facecolor": "white", "edgecolor": "#cccccc"}
+
+    # Figure-level legend: one patch per observed G level present in the event.
+    levels = sorted({band["level"] for band in bands})
+    fig.legend(
+        handles=[Patch(color=G_LEVEL_FILL[lvl], alpha=G_FILL_ALPHA, label=f"G{lvl}") for lvl in levels],
+        title="observed G level", loc="upper center", bbox_to_anchor=(0.5, 1.0),
+        ncols=len(levels), frameon=False, columnspacing=1.0, handlelength=1.4,
+    )
+
+    # Top: speed, actual OMNI vs predicted MRU. Legend upper-left, where the
+    # pre-storm wind is slow and the corner is empty.
+    _shade_g_bands_leveled(ax1, bands)
+    ax1.plot(t_act, v_act, color=NAVY, lw=1.0, label="actual arrival (OMNI)")
+    ax1.plot(t_pred, v_pred, color=ORANGE, lw=0.9, ls="--", label="predicted arrival (MRU)")
+    ax1.set_ylabel("solar-wind speed (km s$^{-1}$)")
+    ax1.legend(loc="upper left", **legend_kw)
+    ax1.grid(axis="x", visible=False)
+
+    # Middle: Bz GSM and the Em coupling, the quantities the G bands actually track.
+    _shade_g_bands_leveled(ax2, bands)
+    ax2.plot(t_bz, bz, color=NAVY, lw=0.9, label="$B_z$ GSM")
+    ax2.axhline(0, color="#444444", lw=0.6)
+    ax2.set_ylabel("$B_z$ GSM (nT)")
+    ax2b = ax2.twinx()
+    ax2b.plot(t_bz, em, color=ORANGE, lw=0.9, label="$E_m = V\\,\\max(0,-B_z)\\cdot 10^{-3}$")
+    ax2b.set_ylabel("$E_m$ (mV m$^{-1}$)", color=ORANGE)
+    ax2b.tick_params(axis="y", colors=ORANGE)
+    ax2b.grid(False)
+    h2, l2 = ax2.get_legend_handles_labels()
+    h2b, l2b = ax2b.get_legend_handles_labels()
+    ax2.legend(h2 + h2b, l2 + l2b, loc="center right", **legend_kw)
+    ax2.grid(axis="x", visible=False)
+
+    # Bottom: forecast G vs observed G on a G-level axis.
+    ax3.step(t_act, observed_g, where="post", color=NAVY, lw=1.2, label="observed G (Kp archive)")
+    ax3.step(t_act, forecast_g, where="post", color=ORANGE, lw=1.0, ls="--", label="forecast G (rules-based)")
+    ax3.set_ylim(-0.25, 5.4)
+    ax3.set_yticks(range(6), [f"G{i}" for i in range(6)])
+    ax3.set_ylabel("NOAA G level")
+    ax3.set_xlabel("time (UTC), May 2024")
+    ax3.legend(loc="upper right", **legend_kw)
+    ax3.grid(axis="x", visible=False)
+
+    ax3.xaxis.set_major_locator(mdates.DayLocator())
+    ax3.xaxis.set_major_formatter(mdates.DateFormatter("%d"))
+    return _save(fig, "worked_example_may2024_panels_v2")
+
+
 # ---------------------------------------------------------------- figure 6 ---
 
 def fig_residual_scatter(metrics: dict) -> list[str]:
@@ -337,6 +431,7 @@ the benchmark / observed series, orange #D55E00 for the ML / forecast series.
 | `walkforward_mae_by_year.pdf` | Walk-forward validation (train on all earlier years, validate on the year shown): the ML correction improves the MAE in every year, growing with training-set size. | 4.7 |
 | `feature_importance_permutation.pdf` | Permutation feature importance of the residual model (validation subsample): the spacecraft off-axis position dominates, consistent with phase-front tilt being the main physical gap in flat ballistic propagation. | 3.4.3 / 4.6 |
 | `worked_example_may2024_panels.pdf` | May 2024 G5 storm worked example: arrived solar-wind speed under MRU vs OMNI timing (top), the Bz GSM and Em coupling that actually drive the observed G shading (middle), and the rules-based forecast G against the observed G level (bottom). | 4.9 |
+| `worked_example_may2024_panels_v2.pdf` | Same data and caption as the previous figure, alternative styling: one sequential purple per observed G level with an explicit G1-G5 legend, and framed legends placed off the curves. | 4.9 |
 | `residual_pred_vs_actual_hexbin.pdf` | Predicted vs actual timing residual on the held-out set (the 1,500-point sample persisted in `ml_metrics.json`): the model captures the bulk of the residual but compresses extremes, as expected from an MAE-optimized learner. | 4.6 |
 
 ## Data provenance of the model features
@@ -379,6 +474,7 @@ def main() -> int:
     written += fig_walkforward(metrics)
     written += fig_feature_importance(metrics)
     written += fig_worked_example(arrival)
+    written += fig_worked_example_v2(arrival)
     written += fig_residual_scatter(metrics)
     written.append(write_captions(metrics))
 
