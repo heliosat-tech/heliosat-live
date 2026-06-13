@@ -2,9 +2,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, RefreshCw, Timer, Wind } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, GitCompareArrows, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, RefreshCw, Scale, Timer, Wind } from 'lucide-react';
 import { TrainingDataPanel } from './TrainingDataPanel';
-import { Brush, CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Brush, CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { classifyGFromKp, kpFromCoupling } from '@/services/stormScaleService';
 
 // ---- Server payload (mirror of /api/console) ----
 interface DangerDto { level: number; code: string; label: string; estKp: number | null; fraction: number }
@@ -24,6 +25,11 @@ interface CurrentDto {
   distanceIsMeasured: boolean;
   lagMinutes: number | null;
   arrivalUtc: string | null;
+  mlApplied?: boolean;
+  mruDelayMin?: number | null;
+  correctedDelayMin?: number | null;
+  mlResidualMin?: number | null;
+  etaBandMin?: number | null;
   danger: DangerDto;
 }
 interface ScaleVal { level: number; code: string; label: string }
@@ -125,7 +131,16 @@ interface ConsoleResponse {
   forecasts: ForecastRowDto[];
   summary: { total: number; verified: number; pending: number; hits: number; avgRating: number | null };
   feedDegraded: boolean;
+  liveSource?: LiveSourceDto;
   warnings: string[];
+}
+// Which independent L1 pipeline (SWPC active spacecraft / NASA IMAP I-ALiRT) won this poll.
+interface LiveSourceDto {
+  id: string | null;
+  label: string | null;
+  sampleAgeMinutes: number | null;
+  freshness: 'fresh' | 'degraded' | 'stale';
+  considered: Array<{ id: string; label: string; sampleCount: number; latestSampleUtc: string | null; errorMessage: string | null }>;
 }
 
 // Danger palette: green (quiet) -> red (extreme), indexed by NOAA G level 0..5.
@@ -182,43 +197,56 @@ function Stat({ label, value, unit }: { label: string; value: string; unit?: str
   );
 }
 
-function DangerHero({ current }: { current: CurrentDto }) {
+function DangerHero({ current, muted = false }: { current: CurrentDto; muted?: boolean }) {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
   const d = current.danger;
   const riskAvailable = current.riskAvailable ?? true;
   const style = dangerStyle(riskAvailable ? d.level : 0);
+  // When the L1 feed is behind, the headline reflects an old sample, not "now". Grey it
+  // so a stale G0 never reads as a confident current all-clear.
+  const colored = riskAvailable && !muted;
   const headline = !riskAvailable
     ? 'G-risk unavailable — required L1 physical variables are missing'
+    : muted
+    ? 'Feed delayed — headline reflects the last received L1 sample, not the current minute'
     : d.level === 0
     ? 'Quiet — northward/weak field, nominal wind'
     : `${d.code} ${style.word.toLowerCase()} geomagnetic storm expected`;
   return (
     <section
-      className={`rounded-xl border p-5 shadow-2xl ${riskAvailable ? style.chip.split(' ')[0] : 'border-slate-700/60 text-slate-300'}`}
-      style={{ background: `radial-gradient(120% 140% at 0% 0%, ${riskAvailable ? style.glow : 'rgba(51,65,85,0.16)'}, rgba(2,6,23,0.6) 60%)` }}
+      className={`rounded-xl border p-5 shadow-2xl ${colored ? style.chip.split(' ')[0] : 'border-slate-700/60 text-slate-300'}`}
+      style={{ background: `radial-gradient(120% 140% at 0% 0%, ${colored ? style.glow : 'rgba(51,65,85,0.16)'}, rgba(2,6,23,0.6) 60%)` }}
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">Main forecast · 30-min L1 average</div>
-          <div className={`mt-1 flex items-baseline gap-3 ${riskAvailable ? style.text : 'text-slate-300'}`}>
+          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">Main forecast · 30-min L1 average{muted ? ' · feed delayed' : ''}</div>
+          <div className={`mt-1 flex items-baseline gap-3 ${colored ? style.text : 'text-slate-400'}`}>
             <span className="font-mono text-4xl font-semibold tracking-wider">{riskAvailable ? (d.level === 0 ? 'G0' : d.code) : '—'}</span>
             <span className="text-xl font-semibold uppercase tracking-widest">{riskAvailable ? style.word : 'Risk unavailable'}</span>
           </div>
           <p className="mt-1 max-w-xl text-sm text-slate-300">{headline}</p>
         </div>
         <div className="text-right">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">Avg. parcel reaches Earth</div>
+          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+            Avg. parcel reaches Earth · {current.mlApplied ? 'MRU + ML' : 'MRU'}
+          </div>
           <div className="font-mono text-2xl font-semibold text-slate-100">
             {current.lagMinutes !== null ? `${current.lagMinutes} min` : '—'}
+            {current.etaBandMin != null && current.lagMinutes !== null && (
+              <span className="ml-1 text-sm font-normal text-slate-400">± {Math.round(current.etaBandMin)}</span>
+            )}
           </div>
           <div className="font-mono text-xs text-cyan-200">{current.arrivalUtc ? `${fmtClock(current.arrivalUtc, timeZone)} ${tzLabel}` : '—'}</div>
+          {current.mlApplied && current.mlResidualMin != null && (
+            <div className="font-mono text-[9px] text-slate-500">ML {current.mlResidualMin >= 0 ? '+' : ''}{current.mlResidualMin.toFixed(1)} min vs MRU</div>
+          )}
         </div>
       </div>
 
       {/* Danger gradient bar */}
       <div className="mt-4">
         <div className="relative h-3 w-full overflow-hidden rounded-full border border-slate-700/60" style={{ background: 'linear-gradient(90deg,#34d399 0%,#a3e635 20%,#fbbf24 45%,#fb923c 65%,#f87171 82%,#e879f9 100%)' }}>
-          {riskAvailable && <div className="absolute top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-white shadow" style={{ left: `calc(${(d.fraction * 100).toFixed(1)}% - 2px)` }} />}
+          {riskAvailable && <div className={`absolute top-1/2 h-5 w-1 -translate-y-1/2 rounded-full shadow ${muted ? 'bg-white/40' : 'bg-white'}`} style={{ left: `calc(${(d.fraction * 100).toFixed(1)}% - 2px)` }} />}
         </div>
         <div className="mt-1 flex justify-between font-mono text-[8px] uppercase tracking-widest text-slate-600">
           <span>Quiet</span><span>G1</span><span>G2</span><span>G3</span><span>G4</span><span>G5</span>
@@ -245,13 +273,6 @@ function DangerHero({ current }: { current: CurrentDto }) {
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
-}
-
-function fmtCompactKm(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return '—';
-  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(value) >= 10_000) return `${Math.round(value / 1000)}k`;
-  return Math.round(value).toLocaleString('en-US');
 }
 
 function fmtCountdown(ms: number) {
@@ -335,7 +356,55 @@ const CORRIDOR_WINDOWS: Array<{ key: string; label: string }> = [
   { key: '90d', label: '3 mo' },
   { key: '1y', label: '1 y' },
 ];
+
+// Corridor replay series cached per window for the whole page session, so re-selecting
+// or switching between windows is instant. The cache is module-level (not per-component)
+// so it survives any remount. The windows are NOT subsets of one another at the same
+// resolution — each is downsampled to a fixed point budget over its own span, so a 24 h
+// view sliced out of the 3 mo data would be far too coarse. Hence each is fetched natively
+// and cached on its own; a background prefetch warms the rest after the first one opens.
+const REPLAY_CACHE = new Map<string, ReplaySeries>();
+async function loadCorridorWindow(windowKey: string): Promise<ReplaySeries | null> {
+  const cached = REPLAY_CACHE.get(windowKey);
+  if (cached) return cached;
+  try {
+    const r = await fetch(`/api/console/corridor?window=${windowKey}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    if (!r.ok) return null;
+    const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[]; coverage?: TransitCoverageDiagnostics };
+    const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t), coverage: s.coverage };
+    REPLAY_CACHE.set(windowKey, series);
+    return series;
+  } catch {
+    return null;
+  }
+}
 const NO_DATA_FILL = '#334155';
+
+// NOAA RTSW nominally publishes ~1 sample/min. We grade the newest L1 sample's age into
+// three tiers so the console never presents a lagging sample as the confident current
+// state (the origin feed is ~hours behind at times):
+//   fresh    < 20 min   — trust the headline as "now"
+//   degraded 20–60 min  — usable but flagged; mute the headline G-level
+//   stale    > 60 min   — do not read as current
+// When the feed lags, the live transit corridor also empties (the newest parcel has
+// already "arrived"), so we surface the age explicitly instead of a bare "no data" state.
+const FEED_DEGRADED_AFTER_MIN = 20;
+const FEED_STALE_AFTER_MIN = 60;
+type FeedFreshness = 'fresh' | 'degraded' | 'stale';
+function classifyFeedAge(min: number | null): FeedFreshness {
+  if (min === null) return 'fresh';
+  if (min > FEED_STALE_AFTER_MIN) return 'stale';
+  if (min > FEED_DEGRADED_AFTER_MIN) return 'degraded';
+  return 'fresh';
+}
+
+/** Compact age, e.g. "12 min" or "5 h 11 min". */
+function fmtFeedAge(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
 
 const fmtDay = (ms: number, timeZone: string) =>
   new Date(ms).toLocaleDateString('en-US', { month: 'short', day: '2-digit', timeZone });
@@ -605,45 +674,51 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
   const arrivalMs = current.arrivalUtc ? new Date(current.arrivalUtc).getTime() : Number.NaN;
   const hasTransit = Number.isFinite(sampleMs) && Number.isFinite(arrivalMs) && arrivalMs > sampleMs && current.speedKmS !== null;
   const effectiveNow = nowMs > 0 ? nowMs : sampleMs;
-  const progress = hasTransit ? clamp01((effectiveNow - sampleMs) / (arrivalMs - sampleMs)) : 0;
   const totalTransitMs = hasTransit ? arrivalMs - sampleMs : null;
   const remainingMs = hasTransit ? Math.max(0, arrivalMs - effectiveNow) : null;
-  const remainingKm = hasTransit ? current.l1DistanceKm * (1 - progress) : null;
-  const elapsedKm = hasTransit ? current.l1DistanceKm * progress : null;
   const lagMin = current.lagMinutes;
 
   // ---- Replay state ----
   const [windowKey, setWindowKey] = useState('live');
   const [replay, setReplay] = useState<ReplaySeries | null>(null);
-  const replayCache = useRef<Map<string, ReplaySeries>>(new Map());
+  const prefetchedRef = useRef(false);
   const isReplay = windowKey !== 'live';
   // Trust the loaded series only if it matches the current window (avoids a stale flash).
   const activeReplay = isReplay && replay && replay.window === windowKey ? replay : null;
   const replayLoading = isReplay && !activeReplay;
   const span = activeReplay ? Math.max(1, activeReplay.endMs - activeReplay.startMs) : 1;
 
-  // Load the forecast-G history from the lightweight corridor endpoint. Cached per window in
-  // a ref, so re-selecting a window already downloaded is instant. Every setState runs inside
-  // the async callback, so the effect never sets state synchronously.
+  // Select a window. A cache hit is applied here in the event handler (instant, no loading
+  // flash); the effect below fetches on a miss. Routing both through the module cache means
+  // an already-loaded window — including one warmed by the background prefetch — is instant.
+  const selectWindow = useCallback((key: string) => {
+    setWindowKey(key);
+    const cached = REPLAY_CACHE.get(key);
+    if (cached) setReplay(cached);
+  }, []);
+
   useEffect(() => {
     if (windowKey === 'live') return;
     let cancelled = false;
-    (async () => {
-      const cached = replayCache.current.get(windowKey);
-      if (cached) { if (!cancelled) setReplay(cached); return; }
-      try {
-        const r = await fetch(`/api/console/corridor?window=${windowKey}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
-        if (!r.ok || cancelled) return;
-        const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[]; coverage?: TransitCoverageDiagnostics };
-        if (cancelled) return;
-        const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t), coverage: s.coverage };
-        replayCache.current.set(windowKey, series);
-        setReplay(series);
-      } catch {
-        /* leave empty -> "no data" state */
+    // loadCorridorWindow resolves the cached series immediately on a hit (same reference,
+    // so this setReplay is a no-op re-render) and fetches once on a miss.
+    void loadCorridorWindow(windowKey).then(series => { if (!cancelled && series) setReplay(series); });
+    return () => { cancelled = true; };
+  }, [windowKey]);
+
+  // The first time any replay window is opened, warm the OTHER windows in the background
+  // (sequential + throttled, cache-aware) so switching between them is then instant. Fire-
+  // and-forget: it only fills the module cache, never component state, so it needn't cancel.
+  useEffect(() => {
+    if (windowKey === 'live' || prefetchedRef.current) return;
+    prefetchedRef.current = true;
+    void (async () => {
+      for (const { key } of CORRIDOR_WINDOWS) {
+        if (key === 'live' || REPLAY_CACHE.has(key)) continue;
+        await loadCorridorWindow(key);
+        await new Promise(resolve => setTimeout(resolve, 400));
       }
     })();
-    return () => { cancelled = true; };
   }, [windowKey]);
 
   // Evenly-spaced date ticks under the heatmap.
@@ -763,6 +838,12 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
   const hasData = isReplay ? windowPeak.hasData : liveCorridor.hasData;
   const peakStyle = dangerStyle(isReplay ? windowPeak.level : liveCorridor.peak.level);
 
+  // Live-feed staleness: when the newest L1 sample is older than the threshold, nothing is
+  // still in transit (it already "arrived"), so the live corridor empties. Detect it here
+  // so the empty state can say "feed behind" rather than the cryptic "no forecast data".
+  const feedAgeMin = Number.isFinite(sampleMs) && nowMs > 0 ? Math.max(0, Math.round((nowMs - sampleMs) / 60000)) : null;
+  const feedStale = !isReplay && feedAgeMin !== null && feedAgeMin > FEED_DEGRADED_AFTER_MIN;
+
   const tile = (label: string, value: ReactNode, accent = false) => (
     <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2">
       <div className="font-mono text-[8px] uppercase tracking-widest text-slate-500">{label}</div>
@@ -797,7 +878,7 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="inline-flex overflow-hidden rounded-md border border-slate-700/60">
           {CORRIDOR_WINDOWS.map(w => (
-            <button key={w.key} type="button" onClick={() => setWindowKey(w.key)}
+            <button key={w.key} type="button" onClick={() => selectWindow(w.key)}
               className={`px-2 py-1 font-mono text-[9px] uppercase tracking-widest transition ${windowKey === w.key ? 'bg-cyan-400/15 text-cyan-100' : 'text-slate-400 hover:text-slate-200'}`}>
               {w.label}
             </button>
@@ -826,6 +907,18 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
         <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-400/30 bg-emerald-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-emerald-200">
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: dangerStyle(0).dot }} />
           {isReplay ? `Quiet — no storms reached G1 in the last ${windowKey}` : 'Quiet — only G0 wind in transit'}
+        </div>
+      ) : feedStale && feedAgeMin !== null ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-400/30 bg-amber-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-amber-200">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          L1 feed delayed · last sample {current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} {tzLabel} ({fmtFeedAge(feedAgeMin)} ago)
+          <span className="text-amber-200/70">· nothing currently in transit</span>
+        </div>
+      ) : !isReplay && Number.isFinite(sampleMs) ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: NO_DATA_FILL }} />
+          Nothing currently in transit
+          <span className="text-slate-500">· last L1 sample {current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} {tzLabel}{feedAgeMin !== null ? ` (${fmtFeedAge(feedAgeMin)} ago)` : ''}</span>
         </div>
       ) : (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
@@ -934,21 +1027,7 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
             {tile('Detected at L1', <>{current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>)}
             {tile('Bow-shock ETA', <>{current.arrivalUtc ? fmtClock(current.arrivalUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>, true)}
             {tile('Countdown', remainingMs !== null ? fmtCountdown(remainingMs) : '—')}
-            {tile('Distance left', <>{fmtCompactKm(remainingKm)} <span className="text-[8px] text-slate-500">km</span></>)}
-          </div>
-          <div className="mt-2 grid gap-2 text-[10px] sm:grid-cols-3">
-            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
-              <span className="uppercase tracking-widest text-slate-600">Travelled</span>
-              <span className="ml-2 text-slate-200">{fmtCompactKm(elapsedKm)} km</span>
-            </div>
-            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
-              <span className="uppercase tracking-widest text-slate-600">Total L1 path</span>
-              <span className="ml-2 text-slate-200">{fmtCompactKm(current.l1DistanceKm)} km</span>
-            </div>
-            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
-              <span className="uppercase tracking-widest text-slate-600">Transit model</span>
-              <span className="ml-2 text-slate-200">MRU {totalTransitMs !== null ? fmtCountdown(totalTransitMs) : '—'}</span>
-            </div>
+            {tile('Transit model', <>{current.mlApplied ? 'MRU + ML' : 'MRU'} {totalTransitMs !== null ? fmtCountdown(totalTransitMs) : '—'}</>)}
           </div>
           {!hasTransit && (
             <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Need a valid L1 speed and Earth-arrival estimate to project the corridor.</p>
@@ -1248,38 +1327,60 @@ function GeoAvailablePlot({ plot }: { plot: GeoPlotDto }) {
   );
 }
 
+// The deck is intentionally trimmed to three GOES products: XRS long channel, >2 MeV
+// integral electrons, and the magnetometer field magnitude. Each comes from primary when
+// available, secondary as a fallback. Plot ids are `goes-<role>-<kind>`.
+const GEO_DECK_KINDS = ['xrs-long', 'electrons-2mev', 'mag-total'] as const;
+function pickDeckPlots(active: GeoPlotDto[]): GeoPlotDto[] {
+  const byId = new Map(active.map(plot => [plot.id, plot]));
+  return GEO_DECK_KINDS
+    .map(kind => byId.get(`goes-primary-${kind}`) ?? byId.get(`goes-secondary-${kind}`) ?? null)
+    .filter((plot): plot is GeoPlotDto => plot !== null);
+}
+
 function GeoAvailablePlots({ plots }: { plots: GeoPlotDto[] }) {
+  // Collapsed by default — the GOES deck is secondary context, not the headline.
+  const [open, setOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const activePlots = plots.filter(plot => plot.points.some(point => point.value !== null));
-  const spacecraft = Array.from(new Set(activePlots.map(plot => plot.spacecraft))).join(' / ');
+  const deckPlots = pickDeckPlots(activePlots);
+  const spacecraft = Array.from(new Set(deckPlots.map(plot => plot.spacecraft))).join(' / ');
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
+    <div className="flex flex-col rounded-lg border border-slate-800 bg-slate-950/30">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="flex w-full flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-left">
+        <div className="flex items-center gap-2">
+          <ChevronRight className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
           <div>
-            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-slate-300">GEO · all available GOES plots</h4>
+            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-slate-300">GEO · GOES deck</h4>
             <p className="mt-0.5 font-mono text-[9px] uppercase tracking-widest text-slate-600">
-              SWPC 6h primary/secondary JSON{spacecraft ? ` · ${spacecraft}` : ''}
+              XRS 0.1–0.8 nm · &gt;2 MeV electrons · MAG |H|{spacecraft ? ` · ${spacecraft}` : ''}
             </p>
           </div>
-          <button type="button" onClick={() => setInfoOpen(o => !o)} aria-expanded={infoOpen} title="What does each GOES plot and unit mean?"
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors ${infoOpen ? 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200' : 'border-slate-700/60 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-200'}`}>
-            <Info className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
         </div>
         <span className="rounded border border-cyan-400/25 bg-cyan-400/10 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-cyan-200">
-          {activePlots.length} plots
+          {deckPlots.length} plots
         </span>
-      </div>
-      {infoOpen && <GeoPlotsInfo />}
-      {activePlots.length > 0 ? (
-        <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
-          {activePlots.map(plot => <GeoAvailablePlot key={plot.id} plot={plot} />)}
-        </div>
-      ) : (
-        <div className="flex h-24 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/40 px-4 text-center font-mono text-[10px] uppercase tracking-widest text-slate-600">
-          No live GEO plot-ready GOES data available
+      </button>
+      {open && (
+        <div className="flex flex-col gap-3 px-3 pb-3">
+          <div className="flex items-center justify-end">
+            <button type="button" onClick={() => setInfoOpen(o => !o)} aria-expanded={infoOpen} title="What does each GOES plot and unit mean?"
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors ${infoOpen ? 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200' : 'border-slate-700/60 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-200'}`}>
+              <Info className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+          {infoOpen && <GeoPlotsInfo />}
+          {deckPlots.length > 0 ? (
+            <div className="grid gap-3 lg:grid-cols-3">
+              {deckPlots.map(plot => <GeoAvailablePlot key={plot.id} plot={plot} />)}
+            </div>
+          ) : (
+            <div className="flex h-24 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/40 px-4 text-center font-mono text-[10px] uppercase tracking-widest text-slate-600">
+              No live GEO plot-ready GOES data available
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1493,7 +1594,7 @@ function ChartsSection({ series, windowKey, onWindow, open, onToggle, loading, v
                   ? 'L1 solar wind — OMNI (shifted to Earth) + ACE (upstream), historical'
                   : series.source === 'compare'
                     ? 'L1 solar wind — ACE (upstream) + MRU forecast vs OMNI (L1 at Earth)'
-                    : 'L1 solar wind — DSCOVR (upstream) + MRU forecast'}
+                    : 'L1 solar wind — active RTSW source (upstream) + MRU forecast'}
               </div>
               {(windowKey === '30d' || windowKey === '1y' || windowKey === '5y') && <ArchiveControl onBuilt={onRefresh} />}
             </div>
@@ -1512,8 +1613,8 @@ function ChartsSection({ series, windowKey, onWindow, open, onToggle, loading, v
                 ? 'All lines are L1-class solar wind (it is only measured at L1 — there is none in GEO/MEO/LEO). Orange = OMNI (the L1 wind shifted to Earth, the complete record); green dashed = ACE upstream at L1 (its plasma sensor died Jul-2024, so speed/density show via OMNI). The G chart compares the G the wind implied vs the observed Kp.'
                 : series.source === 'compare'
                   ? 'All L1-class solar wind: green = ACE upstream at L1, cyan = the MRU forecast (L1 propagated to Earth), orange = OMNI (the L1 wind shifted to Earth). Anchored to today; the recent tail is blank where OMNI has not arrived yet (~3 weeks).'
-                  : 'All L1-class: green dashed = DSCOVR upstream at L1; cyan = the MRU forecast at its Earth-arrival time. OMNI (L1 shifted to Earth) lags ~2–3 weeks, so it only appears on the 30-day+ ranges. The G chart compares forecast G vs observed Kp — but Kp publishes in 3-hour bins and the forecast runs ~1 h ahead (wind still in transit), so the shaded tail has no observed Kp yet.'}{' '}
-              The GEO deck lists every currently wired GOES primary/secondary plot: MAG Hn/Hp/|H|, integral electrons, integral protons, and XRS.
+                  : 'All L1-class: green dashed = the active RTSW source upstream at L1; cyan = the MRU forecast at its Earth-arrival time. OMNI (L1 shifted to Earth) lags ~2–3 weeks, so it only appears on the 30-day+ ranges. The G chart compares forecast G vs observed Kp — but Kp publishes in 3-hour bins and the forecast runs ~1 h ahead (wind still in transit), so the shaded tail has no observed Kp yet.'}{' '}
+              The collapsed GEO deck keeps three GOES products — XRS 0.1–0.8 nm, &gt;2 MeV electrons, and MAG |H| — from primary (secondary as fallback).
             </p>
           </div>
         ) : loading ? (
@@ -1610,6 +1711,13 @@ interface ValidationDataDto {
       role: string;
       metrics: string[];
     };
+    mlArrival: {
+      role: string;
+      train: { startUtc: string; endUtc: string; rows: number };
+      validation: { startUtc: string; endUtc: string; rows: number };
+      generatedAtUtc: string | null;
+      metrics: string[];
+    } | null;
     timingDistribution: { coverage: { startUtc: string; stopUtc: string } | null; samples: number | null; role: string; metrics: string[] };
     variableAlignment: { role: string; metrics: string[] };
     gProxy: { role: string; metrics: string[]; caveat: string };
@@ -1743,6 +1851,197 @@ function fmtDateOnly(iso: string | null) {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+// ---- ML arrival-time residual model artifacts (/api/console/ml) ----
+// Generated offline by `python -m ml.arrival_residual.train`; every number shown in the
+// Benchmark-vs-ML sections comes from these JSONs, never from UI constants.
+interface MlErrorSummary { samples: number; biasMin: number; maeMin: number; rmseMin: number; medianAbsMin: number; p90AbsMin: number; within10Pct: number; within20Pct: number; within30Pct: number }
+interface MlRegimeRow { key: string; label: string; n: number; sharePct: number; leadMin: number; benchmark: MlErrorSummary; ml: MlErrorSummary }
+interface MlMetrics {
+  generatedAtUtc: string;
+  benchmarkName: string;
+  modelName: string;
+  pairing: { source: string; cadence: string; spanStartUtc: string; spanStopUtc: string; samplesTotal: number };
+  train: { startUtc: string; endUtc: string; samples: number };
+  validation: { startUtc: string; endUtc: string; samples: number };
+  overall: { benchmark: MlErrorSummary; ml: MlErrorSummary; ridge: MlErrorSummary };
+  improvement: { maeMin: number; within20Pct: number; biasAbsMin: number };
+  regimes: MlRegimeRow[];
+  histogram: { binEdgesMin: number[]; benchmarkCounts: number[]; mlCounts: number[]; benchmarkOutsidePct: number; mlOutsidePct: number };
+  featureImportance: Array<{ feature: string; deltaMaeMin: number; std: number }>;
+  walkForward: Array<{ year: number; trainRows: number; valRows: number; benchmarkMaeMin: number; mlMaeMin: number }>;
+  verdict: string;
+}
+
+const ML_BENCH_COLOR = '#f59e0b'; // benchmark (MRU ballistic), matches the model-card figures
+const ML_MODEL_COLOR = '#22d3ee'; // MRU + ML correction
+
+/** Shared collapsible shell for every Validation & Studies section: same chevron, same
+ *  header style. Children mount only while open, so collapsed panels do not fetch. */
+function CollapsibleSection({ icon: Icon, title, subtitle, defaultOpen = false, children }: {
+  icon: typeof Gauge; title: string; subtitle?: string; defaultOpen?: boolean; children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="rounded-lg border border-slate-800 bg-slate-950/30">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 rounded-lg p-4 text-left transition hover:bg-slate-900/30">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Icon className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden="true" />
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-300">{title}</h2>
+          {subtitle && <span className="font-mono text-[9px] uppercase tracking-widest text-slate-600">{subtitle}</span>}
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} aria-hidden="true" />
+      </button>
+      {open && <div className="px-4 pb-4">{children}</div>}
+    </section>
+  );
+}
+
+/** One benchmark-vs-ML stat pair with its improvement delta. */
+function PairedStat({ label, unit, bench, ml, delta, deltaGood, digits = 2 }: {
+  label: string; unit: string; bench: number; ml: number; delta: number; deltaGood: boolean; digits?: number;
+}) {
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-950/50 p-3">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">{label}</span>
+        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold ${deltaGood ? 'bg-emerald-400/10 text-emerald-300' : 'bg-rose-400/10 text-rose-300'}`}>
+          {delta >= 0 ? '+' : '−'}{Math.abs(delta).toFixed(digits)} {unit}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <div className="font-mono text-[8px] uppercase tracking-widest" style={{ color: ML_BENCH_COLOR }}>benchmark</div>
+          <div className="font-mono text-xl font-semibold text-slate-300">{bench.toFixed(digits)}<span className="ml-1 text-[10px] text-slate-500">{unit}</span></div>
+        </div>
+        <div>
+          <div className="font-mono text-[8px] uppercase tracking-widest" style={{ color: ML_MODEL_COLOR }}>MRU + ML</div>
+          <div className="font-mono text-xl font-semibold text-slate-100">{ml.toFixed(digits)}<span className="ml-1 text-[10px] text-slate-500">{unit}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 3a · Headline: the MRU benchmark vs the ML residual correction on the held-out tail. */
+function BenchmarkVsMlBody({ metrics, error, loading }: { metrics: MlMetrics | null; error: string | null; loading: boolean }) {
+  const histData = useMemo(() => {
+    if (!metrics) return [];
+    const { binEdgesMin, benchmarkCounts, mlCounts } = metrics.histogram;
+    return benchmarkCounts.map((b, i) => ({
+      x: (binEdgesMin[i] + binEdgesMin[i + 1]) / 2,
+      benchmark: b,
+      ml: mlCounts[i],
+    }));
+  }, [metrics]);
+
+  if (loading && !metrics) return <div className="flex h-28 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Reading ML artifacts…</div>;
+  if (!metrics) return <div className="flex h-20 items-center justify-center px-4 text-center font-mono text-[10px] uppercase tracking-widest text-amber-200/70">{error ?? 'ML artifacts not found.'}</div>;
+
+  const b = metrics.overall.benchmark;
+  const m = metrics.overall.ml;
+  const maeBetter = m.maeMin < b.maeMin;
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="max-w-4xl text-[11px] leading-relaxed text-slate-500">
+        Same paired record as the arrival-time study: for each parcel, the benchmark is the MRU ballistic delay and the ML model adds a learned
+        residual correction from upstream-only L1 features. Scored on the held-out chronological tail, <span className="font-mono text-slate-300">{fmtDateOnly(metrics.validation.startUtc)} → {fmtDateOnly(metrics.validation.endUtc)}</span>,{' '}
+        <span className="font-mono text-slate-300">{metrics.validation.samples.toLocaleString()}</span> samples the model never saw in training.
+      </p>
+      <div className={`rounded-md border p-3 text-[11px] leading-relaxed ${maeBetter ? 'border-emerald-400/25 bg-emerald-400/[0.05] text-emerald-100/90' : 'border-amber-400/25 bg-amber-400/[0.06] text-amber-100/90'}`}>
+        <span className="font-mono text-[9px] uppercase tracking-widest">verdict</span>
+        <div className="mt-0.5 text-slate-200">{metrics.verdict}</div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <PairedStat label="Mean abs arrival error" unit="min" bench={b.maeMin} ml={m.maeMin} delta={metrics.improvement.maeMin} deltaGood={metrics.improvement.maeMin > 0} />
+        <PairedStat label="Within ±20 min" unit="%" bench={b.within20Pct} ml={m.within20Pct} delta={metrics.improvement.within20Pct} deltaGood={metrics.improvement.within20Pct > 0} digits={1} />
+        <PairedStat label="Bias (pred − actual)" unit="min" bench={b.biasMin} ml={m.biasMin} delta={metrics.improvement.biasAbsMin} deltaGood={metrics.improvement.biasAbsMin > 0} />
+      </div>
+      {/* Overlaid error histogram: both distributions over the same validation samples. */}
+      <div className="rounded-md border border-slate-800 bg-slate-950/40 p-3">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">Held-out arrival-error distribution</span>
+          <div className="flex items-center gap-3 font-mono text-[8px] uppercase tracking-widest">
+            <span className="flex items-center gap-1" style={{ color: ML_BENCH_COLOR }}><span className="h-2 w-3 rounded-sm" style={{ backgroundColor: ML_BENCH_COLOR, opacity: 0.6 }} />benchmark (MRU ballistic)</span>
+            <span className="flex items-center gap-1" style={{ color: ML_MODEL_COLOR }}><span className="h-2 w-3 rounded-sm" style={{ backgroundColor: ML_MODEL_COLOR, opacity: 0.6 }} />MRU + ML correction</span>
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={180} minWidth={0} minHeight={180} initialDimension={{ width: 640, height: 180 }}>
+          <AreaChart data={histData} margin={{ top: 6, right: 12, left: 6, bottom: 14 }}>
+            <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="x" type="number" domain={['dataMin', 'dataMax']} fontSize={9} stroke="#64748b" tickFormatter={(v: number) => v.toFixed(0)}
+              label={{ value: 'arrival-time error (min) · predicted − observed', position: 'insideBottom', offset: -8, fill: '#94a3b8', fontSize: 9 }} />
+            <YAxis fontSize={9} stroke="#64748b" width={52} tickFormatter={(v: number) => v.toLocaleString()} />
+            <Tooltip contentStyle={{ backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '6px', color: '#e2e8f0', fontSize: '11px' }}
+              labelFormatter={v => `${Number(v).toFixed(0)} min`} formatter={(v, n) => [Number(v).toLocaleString(), String(n)]} />
+            <ReferenceLine x={0} stroke="#64748b" strokeWidth={0.8} />
+            <Area name="benchmark (MRU ballistic)" dataKey="benchmark" type="step" stroke={ML_BENCH_COLOR} strokeWidth={1.2} fill={ML_BENCH_COLOR} fillOpacity={0.3} isAnimationActive={false} />
+            <Area name="MRU + ML correction" dataKey="ml" type="step" stroke={ML_MODEL_COLOR} strokeWidth={1.2} fill={ML_MODEL_COLOR} fillOpacity={0.3} isAnimationActive={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+          {metrics.histogram.benchmarkOutsidePct.toFixed(1)}% of benchmark and {metrics.histogram.mlOutsidePct.toFixed(1)}% of ML errors fall outside the ±60 min window shown.
+          Model: {metrics.modelName}. Ridge baseline MAE {metrics.overall.ridge.maeMin.toFixed(2)} min. Artifacts generated {fmtDateTime(metrics.generatedAtUtc, 'UTC')} UTC.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** 3b · Benchmark vs ML per observed storm regime (G0 / G1-G2 / G3-G5). */
+function ByRegimeBody({ metrics, error, loading }: { metrics: MlMetrics | null; error: string | null; loading: boolean }) {
+  if (loading && !metrics) return <div className="flex h-24 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Reading ML artifacts…</div>;
+  if (!metrics) return <div className="flex h-20 items-center justify-center px-4 text-center font-mono text-[10px] uppercase tracking-widest text-amber-200/70">{error ?? 'ML artifacts not found.'}</div>;
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="max-w-4xl text-[11px] leading-relaxed text-slate-500">
+        Each held-out sample is classified by the observed G level at that instant (official Kp archive, same stratification as the arrival study).
+        Severe-storm samples are rare, so their numbers carry wide uncertainty.
+      </p>
+      <div className="overflow-x-auto rounded-md border border-slate-800">
+        <table className="w-full min-w-[640px] border-collapse font-mono text-[10px]">
+          <thead>
+            <tr className="bg-slate-950/60 text-slate-500">
+              <th className="px-2 py-1.5 text-left font-medium">Regime</th>
+              <th className="px-2 py-1.5 text-right font-medium">Samples</th>
+              <th className="px-2 py-1.5 text-right font-medium">Share</th>
+              <th className="px-2 py-1.5 text-right font-medium">Lead</th>
+              <th className="px-2 py-1.5 text-right font-medium" style={{ color: ML_BENCH_COLOR }}>Bench MAE</th>
+              <th className="px-2 py-1.5 text-right font-medium" style={{ color: ML_MODEL_COLOR }}>ML MAE</th>
+              <th className="px-2 py-1.5 text-right font-medium" style={{ color: ML_BENCH_COLOR }}>Bench ±20</th>
+              <th className="px-2 py-1.5 text-right font-medium" style={{ color: ML_MODEL_COLOR }}>ML ±20</th>
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.regimes.map(r => {
+              const lvl = r.key === 'severe' ? 4 : r.key === 'storm' ? 2 : 0;
+              const maeBetter = r.ml.maeMin < r.benchmark.maeMin;
+              return (
+                <tr key={r.key} className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-2 py-1.5"><span style={{ color: dangerStyle(lvl).dot }}>●</span> {r.label}</td>
+                  <td className="px-2 py-1.5 text-right text-slate-400">{r.n.toLocaleString()}</td>
+                  <td className="px-2 py-1.5 text-right text-slate-500">{r.sharePct}%</td>
+                  <td className="px-2 py-1.5 text-right text-cyan-200/90">{r.leadMin.toFixed(0)} min</td>
+                  <td className="px-2 py-1.5 text-right text-slate-400">{r.benchmark.maeMin.toFixed(2)} min</td>
+                  <td className="px-2 py-1.5 text-right" style={{ color: maeBetter ? '#6ee7b7' : '#fbbf24' }}>{r.ml.maeMin.toFixed(2)} min</td>
+                  <td className="px-2 py-1.5 text-right text-slate-400">{r.benchmark.within20Pct.toFixed(1)}%</td>
+                  <td className="px-2 py-1.5 text-right" style={{ color: r.ml.within20Pct >= r.benchmark.within20Pct ? '#6ee7b7' : '#fbbf24' }}>{r.ml.within20Pct.toFixed(1)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {metrics.walkForward.length > 0 && (
+        <p className="text-[10px] leading-relaxed text-slate-500">
+          Walk-forward by year (train on everything before, validate on the year):{' '}
+          {metrics.walkForward.map(w => `${w.year}: ${w.benchmarkMaeMin.toFixed(1)} → ${w.mlMaeMin.toFixed(1)} min`).join(' · ')}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ArchiveTile({ title, archive, accent }: { title: string; archive: ValidationArchiveInfo; accent: string }) {
   return (
     <div className="rounded-md border border-slate-800 bg-slate-950/45 p-3">
@@ -1760,7 +2059,7 @@ function ArchiveTile({ title, archive, accent }: { title: string; archive: Valid
   );
 }
 
-function ValidationDataUsedPanel() {
+function ValidationDataUsedBody() {
   const [data, setData] = useState<ValidationDataDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1781,18 +2080,14 @@ function ValidationDataUsedPanel() {
 
   const studies = data?.studies;
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-950/30 p-4">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Database className="h-4 w-4 text-cyan-300" aria-hidden="true" />
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-300">Data used · validation & studies</h2>
-        </div>
-        {data && <span className="font-mono text-[10px] text-slate-500">snapshot {fmtDateTime(data.generatedAtUtc, 'UTC')} UTC</span>}
+    <div>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <p className="max-w-4xl text-[11px] leading-relaxed text-slate-500">
+          Validation uses different datasets for different jobs: ACE is the historical upstream L1 input, OMNI is an internal Earth&apos;s bow-shock nose timing reference,
+          GOES/GEO is response context, and Kp/G is a ground geomagnetic response label. None of these turns GOES or Kp into a direct L1 solar-wind measurement.
+        </p>
+        {data && <span className="shrink-0 font-mono text-[10px] text-slate-500">snapshot {fmtDateTime(data.generatedAtUtc, 'UTC')} UTC</span>}
       </div>
-      <p className="mb-3 max-w-4xl text-[11px] leading-relaxed text-slate-500">
-        Validation uses different datasets for different jobs: ACE is the historical upstream L1 input, OMNI is an internal Earth&apos;s bow-shock nose timing reference,
-        GOES/GEO is response context, and Kp/G is a ground geomagnetic response label. None of these turns GOES or Kp into a direct L1 solar-wind measurement.
-      </p>
 
       {loading && !data ? (
         <div className="flex h-24 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Reading validation inventory…</div>
@@ -1826,6 +2121,17 @@ function ValidationDataUsedPanel() {
                   <td className="px-2 py-1.5 text-slate-500">{studies?.arrivalTiming.metrics.join(', ')}</td>
                 </tr>
                 <tr className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-2 py-1.5 font-mono text-cyan-200">ML arrival-time correction</td>
+                  <td className="px-2 py-1.5 text-slate-400">{studies?.mlArrival?.role ?? 'Learned residual correction on top of the MRU ballistic delay.'}</td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500">
+                    {studies?.mlArrival
+                      ? <>train {fmtDateOnly(studies.mlArrival.train.startUtc)} → {fmtDateOnly(studies.mlArrival.train.endUtc)} · {studies.mlArrival.train.rows.toLocaleString()} rows<br />
+                          validation {fmtDateOnly(studies.mlArrival.validation.startUtc)} → {fmtDateOnly(studies.mlArrival.validation.endUtc)} · {studies.mlArrival.validation.rows.toLocaleString()} rows</>
+                      : 'artifacts missing: run python -m ml.arrival_residual.train'}
+                  </td>
+                  <td className="px-2 py-1.5 text-slate-500">{studies?.mlArrival?.metrics.join(', ') ?? ''}</td>
+                </tr>
+                <tr className="border-t border-slate-800/70 text-slate-300">
                   <td className="px-2 py-1.5 font-mono text-cyan-200">Variable alignment</td>
                   <td className="px-2 py-1.5 text-slate-400">{studies?.variableAlignment.role}</td>
                   <td className="px-2 py-1.5 font-mono text-slate-500">{fmtDateOnly(data.archives.ace.startUtc)} → {fmtDateOnly(data.archives.ace.endUtc)} vs {fmtDateOnly(data.archives.omni.startUtc)} → {fmtDateOnly(data.archives.omni.endUtc)}</td>
@@ -1855,7 +2161,7 @@ function ValidationDataUsedPanel() {
           </div>
         </div>
       ) : null}
-    </section>
+    </div>
   );
 }
 
@@ -1948,7 +2254,7 @@ function fmtPhysicalSummaryMetric(interval: PhysicalDriverIntervalSummary | null
   return value === null || value === undefined || !Number.isFinite(value) ? '—' : `${value.toFixed(digits)} ${unit}`;
 }
 
-function PhysicalDriverEventStatsPanel() {
+function PhysicalDriverEventStatsBody() {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
   const [windowKey, setWindowKey] = useState('90d');
   const [stats, setStats] = useState<PhysicalDriverStatsDto | null>(null);
@@ -1991,17 +2297,13 @@ function PhysicalDriverEventStatsPanel() {
   }, [stats]);
 
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-950/30 p-4">
+    <div>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Gauge className="h-4 w-4 text-cyan-300" aria-hidden="true" />
-          <div>
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-300">Physical-driver event statistics</h2>
-            <p className="mt-0.5 max-w-4xl text-[11px] leading-relaxed text-slate-500">
-              Physical in-situ variables measured at L1 and shifted to estimated Earth&apos;s bow-shock nose arrival time. These count hazardous driver intervals, not guaranteed satellite anomalies or measured G-levels.
-            </p>
-          </div>
-        </div>
+        <p className="max-w-4xl text-[11px] leading-relaxed text-slate-500">
+          Environmental context, not a model score: this section counts hazardous solar-wind and IMF driver intervals (measured at L1, shifted to estimated
+          Earth&apos;s bow-shock nose arrival time) and is decoupled from the benchmark and ML arrival-time results above. It does not count guaranteed satellite
+          anomalies or measured G levels.
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex overflow-hidden rounded-md border border-slate-700/60">
             {PHYSICAL_DRIVER_WINDOWS.map(w => (
@@ -2050,11 +2352,11 @@ function PhysicalDriverEventStatsPanel() {
           </div>
         </div>
       ) : null}
-    </section>
+    </div>
   );
 }
 
-function ArrivalAccuracyCard() {
+function ArrivalAccuracyBody() {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
   const [stats, setStats] = useState<ArrivalAccuracy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2101,6 +2403,48 @@ function ArrivalAccuracyCard() {
   const geoData = useMemo(() => (stats?.geo ?? []).filter(p => p.hp !== null), [stats]);
   const headline = stats?.events.find(e => e.id === stats.headlineEventId) ?? null;
 
+  // Bz and the derived Em coupling (repo convention: V * max(0, -Bz) * 1e-3, mV/m) at the
+  // actual arrival times. G is driven by southward Bz and coupling, NOT by speed, so this
+  // panel is what the observed G bands should visibly track.
+  const bzData = useMemo(() =>
+    (stats?.actual ?? [])
+      .filter(p => p.bz !== null)
+      .map(p => ({ t: p.t, bz: p.bz as number, em: p.speed !== null ? (p.speed * Math.max(0, -(p.bz as number))) / 1000 : null })),
+    [stats]);
+
+  // Rules-based FORECAST G (the same mapping the live console uses: trailing ~3 h mean of
+  // Em + the fast-stream speed floor) vs OBSERVED G (official Kp bands), per arrived sample.
+  const gOverlay = useMemo(() => {
+    if (!stats) return [] as Array<{ t: number; forecastG: number; observedG: number }>;
+    const pts = stats.actual.filter(p => p.speed !== null);
+    const bands = stats.bands.slice().sort((a, b) => a.from - b.from);
+    const obsAt = (t: number) => { let lvl = 0; for (const b of bands) { if (t < b.from) break; if (t < b.to) lvl = Math.max(lvl, b.level); } return lvl; };
+    const em = pts.map(p => ((p.speed as number) * Math.max(0, -(p.bz ?? 0))) / 1000);
+    const sp = pts.map(p => p.speed as number);
+    const out: Array<{ t: number; forecastG: number; observedG: number }> = [];
+    let start = 0; let sumEm = 0; let sumSp = 0; let n = 0;
+    for (let i = 0; i < pts.length; i++) {
+      sumEm += em[i]; sumSp += sp[i]; n += 1;
+      while (pts[i].t - pts[start].t > 3 * 3_600_000) { sumEm -= em[start]; sumSp -= sp[start]; n -= 1; start += 1; }
+      const kp = kpFromCoupling(sumEm / n, sumSp / n);
+      out.push({ t: pts[i].t, forecastG: classifyGFromKp(kp).level, observedG: obsAt(pts[i].t) });
+    }
+    return out;
+  }, [stats]);
+
+  // Honest audit of the rules-based mapping over this event, computed from the data above.
+  const gAudit = useMemo(() => {
+    if (gOverlay.length === 0) return null;
+    const severe = gOverlay.filter(p => p.observedG >= 3);
+    const under = severe.filter(p => p.forecastG < p.observedG).length;
+    return {
+      peakForecast: gOverlay.reduce((m, p) => Math.max(m, p.forecastG), 0),
+      peakObserved: gOverlay.reduce((m, p) => Math.max(m, p.observedG), 0),
+      severeN: severe.length,
+      underSeverePct: severe.length > 0 ? Math.round((under / severe.length) * 100) : null,
+    };
+  }, [gOverlay]);
+
   const xDomain: [number, number] = zoom ?? [startMs, stopMs];
   const onBrush = useCallback((r: { startIndex?: number; endIndex?: number }) => {
     if (r.startIndex == null || r.endIndex == null || r.endIndex <= r.startIndex) { setZoom(null); return; }
@@ -2110,24 +2454,20 @@ function ArrivalAccuracyCard() {
   }, [data]);
 
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-950/30 p-4">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Timer className="h-4 w-4 text-cyan-300" aria-hidden="true" />
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-300">MRU arrival-time accuracy · validated at Earth</h2>
-        </div>
-        <div className="flex items-center gap-2">
+    <div>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <p className="max-w-3xl text-[11px] leading-relaxed text-slate-500">
+          A solar-wind parcel is seen upstream; MRU predicts <span className="text-slate-300">when</span> it reaches Earth (lag = L1 distance ÷ speed).
+          We re-detect that same parcel in the Earth&apos;s bow-shock nose timing reference (OMNI) and measure how many <span className="text-slate-300">minutes</span> off the prediction
+          was. The headline stats span <span className="text-slate-300">several years</span> of OMNI; the charts below zoom one storm (May 2024 G5) as a worked example.
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
           {stats && <span className="font-mono text-[10px] text-slate-500">{stats.statsSpan.multiYear ? `${new Date(stats.statsSpan.startUtc).getUTCFullYear()}–${new Date(stats.statsSpan.stopUtc).getUTCFullYear()}` : stats.interval.label} · {stats.samples.toLocaleString()} samples</span>}
           <button type="button" onClick={() => void load(true)} disabled={busy} className="flex items-center gap-1 rounded border border-slate-700/60 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-slate-400 hover:text-cyan-200 disabled:cursor-wait">
             {busy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-3 w-3" aria-hidden="true" />} Recompute
           </button>
         </div>
       </div>
-      <p className="mb-3 max-w-3xl text-[11px] leading-relaxed text-slate-500">
-        A solar-wind parcel is seen upstream; MRU predicts <span className="text-slate-300">when</span> it reaches Earth (lag = L1 distance ÷ speed).
-        We re-detect that same parcel in the Earth&apos;s bow-shock nose timing reference (OMNI) and measure how many <span className="text-slate-300">minutes</span> off the prediction
-        was. The headline stats span <span className="text-slate-300">several years</span> of OMNI; the chart below zooms one storm (May 2024 G5) as a worked example.
-      </p>
 
       {loading && !stats ? (
         <div className="flex h-28 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Re-running the forecast over the storm…</div>
@@ -2153,11 +2493,11 @@ function ArrivalAccuracyCard() {
                 <span className="font-mono text-[9px] text-slate-500">L1 → Earth transit time</span>
               </div>
               <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
-                Mean lead <span className="font-mono text-base font-semibold text-cyan-200">{stats.meanLeadMin.toFixed(0)} min</span> — the typical{' '}
+                Mean lead <span className="font-mono text-base font-semibold text-cyan-200">{stats.meanLeadMin.toFixed(0)} min</span>: the typical{' '}
                 <span className="text-slate-100">±{stats.maeMin.toFixed(1)} min</span> timing error is only{' '}
                 <span className="text-slate-100">{Math.round((stats.maeMin / stats.meanLeadMin) * 100)}%</span> of it, leaving ~
                 <span className="text-slate-100">{Math.max(0, stats.meanLeadMin - stats.maeMin).toFixed(0)} min</span> of dependable warning. The error matters
-                relative to this margin — not on its own (±8 min on a 30-min lead is fine; on a 10-min lead it is not).
+                relative to this margin, not on its own (±8 min on a 30-min lead is fine; on a 10-min lead it is not).
               </p>
             </div>
           )}
@@ -2204,7 +2544,7 @@ function ArrivalAccuracyCard() {
               </table>
             </div>
             <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
-              The headline {stats.maeMin.toFixed(1)} min averages <span className="text-slate-300">every sample</span> across the whole span (≈{stats.samples.toLocaleString()}), so the calm majority dominates it. It is a pure <span className="text-slate-300">timing</span> error — MRU&apos;s ballistic lag vs OMNI&apos;s measured delay for the same parcel — so we never expect an identical trace, only the right arrival time.
+              The headline {stats.maeMin.toFixed(1)} min averages <span className="text-slate-300">every sample</span> across the whole span (≈{stats.samples.toLocaleString()}), so the calm majority dominates it. It is a pure <span className="text-slate-300">timing</span> error, MRU&apos;s ballistic lag vs OMNI&apos;s measured delay for the same parcel, so we never expect an identical trace, only the right arrival time.
             </p>
           </div>
           )}
@@ -2239,6 +2579,75 @@ function ArrivalAccuracyCard() {
                 <Brush dataKey="t" height={14} travellerWidth={8} stroke="#334155" fill="#0b1220" onChange={onBrush} tickFormatter={(v: number) => fmtTick(v, fullSpan, timeZone)} />
               </LineChart>
             </ResponsiveContainer>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+              Note: the G bands do not follow the speed peak. G is driven by southward Bz and the Em coupling, not by speed alone, which is why the
+              strongest shading sits where Bz plunges in the panel below, not where the wind is fastest.
+            </p>
+
+            {/* Time-aligned Bz + Em subpanel: the quantities the observed G bands actually track. */}
+            {bzData.length > 0 && (
+              <div className="mt-2 border-t border-slate-800/70 pt-2">
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-[8px] uppercase tracking-widest text-slate-500">Bz GSM (nT) + Em coupling · the G drivers</span>
+                  <div className="flex items-center gap-2 font-mono text-[8px] uppercase tracking-widest">
+                    <span className="flex items-center gap-1 text-rose-200"><span className="h-0.5 w-3 bg-rose-400" />Bz GSM</span>
+                    <span className="flex items-center gap-1 text-emerald-200"><span className="h-0.5 w-3 bg-emerald-400" />Em = V·max(0,−Bz)·10⁻³ (mV/m)</span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={120} minWidth={0} minHeight={120} initialDimension={{ width: 640, height: 120 }}>
+                  <LineChart data={bzData} margin={{ top: 2, right: 12, left: 6, bottom: 4 }}>
+                    <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
+                    {stats.bands.map((b, i) => (
+                      <ReferenceArea key={i} x1={b.from} x2={b.to} yAxisId="bz" fill={dangerStyle(b.level).dot} fillOpacity={0.1} stroke="none" ifOverflow="hidden" />
+                    ))}
+                    <XAxis dataKey="t" type="number" domain={xDomain} allowDataOverflow scale="time" hide />
+                    <YAxis yAxisId="bz" fontSize={8} stroke="#f87171" domain={['auto', 'auto']} width={46} tickFormatter={(v: number) => v.toFixed(0)} />
+                    <YAxis yAxisId="em" orientation="right" fontSize={8} stroke="#34d399" domain={[0, 'auto']} width={40} tickFormatter={(v: number) => v.toFixed(0)} />
+                    <ReferenceLine yAxisId="bz" y={0} stroke="#64748b" strokeWidth={0.7} />
+                    <Tooltip contentStyle={{ backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '6px', color: '#e2e8f0', fontSize: '11px' }}
+                      labelFormatter={v => `${fmtFull(Number(v), timeZone)} ${tzLabel}`}
+                      formatter={(v, n) => [`${Number(v).toFixed(1)} ${String(n).startsWith('Em') ? 'mV/m' : 'nT'}`, String(n)]} />
+                    <Line yAxisId="bz" name="Bz GSM" dataKey="bz" stroke="#f87171" strokeWidth={1.2} dot={false} connectNulls isAnimationActive={false} type="linear" />
+                    <Line yAxisId="em" name="Em coupling" dataKey="em" stroke="#34d399" strokeWidth={1.1} dot={false} connectNulls isAnimationActive={false} type="linear" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Forecast G vs observed G on a G-level axis: where the rules-based mapping
+                under or over predicts during this event. */}
+            {gOverlay.length > 0 && (
+              <div className="mt-2 border-t border-slate-800/70 pt-2">
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-[8px] uppercase tracking-widest text-slate-500">Forecast G (rules-based, trailing 3 h coupling) vs observed G (official Kp)</span>
+                  <div className="flex items-center gap-2 font-mono text-[8px] uppercase tracking-widest">
+                    <span className="flex items-center gap-1 text-cyan-200"><span className="h-0.5 w-3 border-t border-dashed" style={{ borderColor: ARRIVAL_PRED_COLOR }} />forecast G</span>
+                    <span className="flex items-center gap-1 text-orange-200"><span className="h-0.5 w-3" style={{ backgroundColor: ARRIVAL_ACTUAL_COLOR }} />observed G</span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={110} minWidth={0} minHeight={110} initialDimension={{ width: 640, height: 110 }}>
+                  <LineChart data={gOverlay} margin={{ top: 2, right: 12, left: 6, bottom: 4 }}>
+                    <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="t" type="number" domain={xDomain} allowDataOverflow scale="time" hide />
+                    <YAxis fontSize={8} stroke="#64748b" domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} width={46} tickFormatter={(v: number) => `G${v}`} />
+                    <Tooltip contentStyle={{ backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '6px', color: '#e2e8f0', fontSize: '11px' }}
+                      labelFormatter={v => `${fmtFull(Number(v), timeZone)} ${tzLabel}`} formatter={(v, n) => [`G${Number(v)}`, String(n)]} />
+                    <Line name="forecast G" dataKey="forecastG" stroke={ARRIVAL_PRED_COLOR} strokeWidth={1.3} strokeDasharray="4 3" dot={false} isAnimationActive={false} type="stepAfter" />
+                    <Line name="observed G" dataKey="observedG" stroke={ARRIVAL_ACTUAL_COLOR} strokeWidth={1.4} dot={false} isAnimationActive={false} type="stepAfter" />
+                  </LineChart>
+                </ResponsiveContainer>
+                {gAudit && (
+                  <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                    Audit of the rules-based mapping over this event: peak forecast G{gAudit.peakForecast} vs peak observed G{gAudit.peakObserved}
+                    {gAudit.underSeverePct !== null && (
+                      <>; during the {gAudit.severeN.toLocaleString()} samples with observed G3+, the forecast sits below the observed level {gAudit.underSeverePct}% of the time</>
+                    )}.
+                    The trailing 3 h coupling average reacts late at storm onset and saturates near the G5 anchor, so peak G can be reached only briefly even
+                    when instantaneous coupling is far above it. Kp itself is a 3-hour bin, so some disagreement is timing granularity, not pure model error.
+                  </p>
+                )}
+              </div>
+            )}
             {geoData.length > 0 && (
               <div className="mt-2 border-t border-slate-800/70 pt-2">
                 <div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-slate-500">GEO (GOES) magnetosphere response · Hp (nT)</div>
@@ -2258,7 +2667,7 @@ function ArrivalAccuracyCard() {
           {/* Per-shock arrival timing — the "with what precision did it arrive" detail. */}
           {headline && (
             <div className="rounded-md border border-cyan-400/25 bg-cyan-400/[0.05] p-3 text-[11px] text-slate-300">
-              <span className="font-semibold text-cyan-200">Headline shock</span> — the storm front was re-detected at Earth on{' '}
+              <span className="font-semibold text-cyan-200">Headline shock</span>: the storm front was re-detected at Earth on{' '}
               <span className="font-mono text-slate-100">{fmtFull(headline.observedArrivalMs, timeZone)} {tzLabel}</span>; MRU predicted{' '}
               <span className="font-mono text-slate-100">{fmtFull(headline.predictedArrivalMs, timeZone)}</span> →{' '}
               <span className="font-mono" style={{ color: Math.abs(headline.errorMin) <= 15 ? '#6ee7b7' : '#fbbf24' }}>{fmtSignedMin(headline.errorMin)} min</span> error
@@ -2298,14 +2707,14 @@ function ArrivalAccuracyCard() {
           <p className="text-[10px] leading-relaxed text-slate-500">
             Ground truth is OMNI&apos;s own per-minute propagation delay (the community-standard phase-front technique); the bars/lines above are the
             same wind under the two timings, so the residual is purely the MRU ballistic-timing error. Across the span the forecast lands within
-            ~{stats.maeMin.toFixed(0)} min on average ({stats.withinMinPct['20'].toFixed(0)}% within ±20 min), and tightens to {stats.strata.find(s => s.key === 'severe')?.maeMin.toFixed(0) ?? stats.maeMin.toFixed(0)} min during severe storms —
+            ~{stats.maeMin.toFixed(0)} min on average ({stats.withinMinPct['20'].toFixed(0)}% within ±20 min), and tightens to {stats.strata.find(s => s.key === 'severe')?.maeMin.toFixed(0) ?? stats.maeMin.toFixed(0)} min during severe storms:
             strong enough to call the arrival to the right hour and the storm level it carried.
           </p>
         </div>
       ) : (
-        <div className="flex h-20 items-center justify-center px-4 text-center font-mono text-[10px] uppercase tracking-widest text-amber-200/70">{error ?? 'Could not compute — try recompute'}</div>
+        <div className="flex h-20 items-center justify-center px-4 text-center font-mono text-[10px] uppercase tracking-widest text-amber-200/70">{error ?? 'Could not compute: try recompute'}</div>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -2333,51 +2742,6 @@ interface NowcastDto {
   } | null;
   inbound: { peakG: number; peakSpeed: number; minBz: number; leadMinutes: number; worstEtaUtc: string } | null;
   warning: string | null;
-}
-
-function NowcastChart({ title, unit, variable, dto }: { title: string; unit: string; variable: 'speed' | 'bz'; dto: NowcastDto }) {
-  const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
-  const data = useMemo(() => {
-    const map = new Map<number, { t: number; detected: number | null; forecast: number | null }>();
-    const key = (t: number) => Math.round(t / 60000) * 60000;
-    for (const p of dto.l1) { const k = key(p.t); const r = map.get(k) ?? { t: k, detected: null, forecast: null }; r.detected = p[variable]; map.set(k, r); }
-    for (const p of dto.mru) { const k = key(p.t); const r = map.get(k) ?? { t: k, detected: null, forecast: null }; r.forecast = p[variable]; map.set(k, r); }
-    return [...map.values()].sort((a, b) => a.t - b.t);
-  }, [dto, variable]);
-  const lastT = data.length ? data[data.length - 1].t : dto.now;
-  const axisMin = dto.startMs;
-  const axisMax = Math.max(dto.now + 5 * 60000, lastT);
-  const span = axisMax - axisMin;
-  const has = data.some(d => d.detected !== null || d.forecast !== null);
-  return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <h4 className="text-[11px] font-semibold uppercase tracking-widest text-slate-300">{title}</h4>
-        <div className="flex items-center gap-2 font-mono text-[8px] uppercase tracking-widest">
-          <span className="flex items-center gap-1 text-emerald-200"><span className="h-0.5 w-3" style={{ backgroundColor: DETECTED_COLOR }} />L1 now</span>
-          <span className="flex items-center gap-1 text-cyan-200"><span className="h-0.5 w-3 border-t border-dashed" style={{ borderColor: MRU_COLOR }} />inbound</span>
-          <span className="text-slate-500">{unit}</span>
-        </div>
-      </div>
-      {has ? (
-        <ResponsiveContainer width="100%" height={170} minWidth={0} minHeight={170} initialDimension={{ width: 320, height: 170 }}>
-          <LineChart data={data} margin={{ top: 6, right: 12, left: 6, bottom: 24 }}>
-            <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
-            <ReferenceArea x1={dto.now} x2={axisMax} y1={-100000} y2={100000} fill="#38bdf8" fillOpacity={0.05} stroke="none" />
-            {variable === 'bz' && <ReferenceLine y={0} stroke="#475569" strokeDasharray="2 2" />}
-            <ReferenceLine x={dto.now} stroke="#cbd5e1" strokeOpacity={0.7} strokeDasharray="3 3" label={{ value: 'now', position: 'insideTopLeft', fill: '#cbd5e1', fontSize: 9 }} />
-            <XAxis dataKey="t" type="number" domain={[axisMin, axisMax]} allowDataOverflow scale="time" fontSize={9} stroke="#64748b" tickMargin={4} minTickGap={42} tickFormatter={(v: number) => fmtTick(v, span, timeZone)}
-              label={{ value: `time · ${tzLabel}`, position: 'insideBottom', offset: -6, fill: '#94a3b8', fontSize: 9 }} />
-            <YAxis fontSize={9} stroke="#64748b" domain={['auto', 'auto']} width={46} tickFormatter={(v: number) => (variable === 'speed' ? v.toFixed(0) : v.toFixed(1))}
-              label={{ value: unit, angle: -90, position: 'insideLeft', offset: 16, style: { textAnchor: 'middle', fontSize: 9, fill: '#94a3b8' } }} />
-            <Tooltip contentStyle={{ backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '6px', color: '#e2e8f0', fontSize: '11px' }} labelFormatter={v => `${fmtFull(Number(v), timeZone)} ${tzLabel}`} formatter={(v, n) => [`${Number(v).toFixed(1)} ${unit}`, String(n)]} />
-            <Line name="L1 detected" dataKey="detected" stroke={DETECTED_COLOR} strokeWidth={1.6} dot={false} connectNulls isAnimationActive={false} type="linear" />
-            <Line name="inbound forecast" dataKey="forecast" stroke={MRU_COLOR} strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls isAnimationActive={false} type="linear" />
-          </LineChart>
-        </ResponsiveContainer>
-      ) : <div className="flex h-[150px] items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">No live L1 samples</div>}
-    </div>
-  );
 }
 
 function NowcastPanel() {
@@ -2447,19 +2811,11 @@ function NowcastPanel() {
         </div>
       </div>
 
-      {dto ? (
-        <div className="grid gap-3 lg:grid-cols-2">
-          <NowcastChart title="Solar-wind speed" unit="km/s" variable="speed" dto={dto} />
-          <NowcastChart title="Bz (north-south)" unit="nT" variable="bz" dto={dto} />
-        </div>
-      ) : !loading ? (
-        <div className="flex h-32 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Nowcast feed unavailable</div>
-      ) : (
-        <div className="flex h-32 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Reading L1 feed…</div>
+      {!dto && !loading && (
+        <div className="flex h-12 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Nowcast feed unavailable</div>
       )}
       <p className="mt-3 max-w-3xl text-[10px] leading-relaxed text-slate-500">
-        Latest L1 sample = the active RTSW L1 source upstream now; strongest inbound sample = the worst already-measured parcel still travelling to Earth.
-        Solid lines are upstream measurements; dashed lines are those same measurements shifted to their estimated Earth-arrival time (~{leadMin} min lead).
+        Latest L1 sample = the active RTSW L1 source upstream now; strongest inbound sample = the worst already-measured parcel still travelling to Earth (~{leadMin} min lead). The full speed and Bz traces live in Live Charts below.
       </p>
     </section>
   );
@@ -2476,7 +2832,7 @@ interface Backtest {
 }
 const VAR_LABEL: Record<VarSkill['variable'], string> = { speed: 'Solar-wind speed', density: 'Proton density', bt: 'Field |B|', bz: 'Bz (GSM)' };
 
-function BacktestPanel() {
+function BacktestBody() {
   const [stats, setStats] = useState<Backtest | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2498,24 +2854,20 @@ function BacktestPanel() {
 
   const cov = stats?.coverage;
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-950/30 p-4">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <LineChartIcon className="h-4 w-4 text-cyan-300" aria-hidden="true" />
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-300">MRU hindcast · forecast vs actual</h2>
-        </div>
-        <div className="flex items-center gap-2">
+    <div>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <p className="max-w-3xl text-[11px] leading-relaxed text-slate-500">
+          Replays the MRU model over the archived L1 record: every ACE (upstream L1) reading is propagated ballistically to its Earth-arrival
+          time and scored against what the wind actually was then: the OMNI record (the same L1 wind shifted to Earth). This is how the simple
+          model would have performed historically.
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
           {cov && <span className="font-mono text-[10px] text-slate-500">{stats?.pairs.toLocaleString()} hourly pairs · {cov.startUtc.slice(0, 7)} → {cov.stopUtc.slice(0, 7)}</span>}
           <button type="button" onClick={() => void load()} disabled={loading} className="flex items-center gap-1 rounded border border-slate-700/60 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-slate-400 hover:text-cyan-200 disabled:cursor-wait">
             {loading ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-3 w-3" aria-hidden="true" />} rerun
           </button>
         </div>
       </div>
-      <p className="mb-3 max-w-3xl text-[11px] leading-relaxed text-slate-500">
-        Replays the MRU model over the archived L1 record: every ACE (upstream L1) reading is propagated ballistically to its Earth-arrival
-        time and scored against what the wind actually was then — the OMNI record (the same L1 wind shifted to Earth). This is how the simple
-        model would have performed historically.
-      </p>
 
       {loading && !stats ? (
         <div className="flex h-24 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Running backtest…</div>
@@ -2556,12 +2908,58 @@ function BacktestPanel() {
           </div>
           <p className="text-[10px] leading-relaxed text-slate-500">
             MAE/RMSE are the typical forecast error; bias is the mean over/under-estimate; correlation is how well the shape tracks. Because
-            MRU and OMNI share the L1 source, the residual error mostly reflects the ballistic propagation lag — i.e. how good the simple
+            MRU and OMNI share the L1 source, the residual error mostly reflects the ballistic propagation lag, i.e. how good the simple
             timing assumption is. Evaluated where ACE plasma exists (≈2021–mid-2024).
           </p>
         </div>
       ) : null}
-    </section>
+    </div>
+  );
+}
+
+// ---- Validation & Studies tab: every section is a collapsible panel. Benchmark-vs-ML
+// (the headline result) and By-regime open by default; everything else starts collapsed.
+// The two ML sections read /api/console/ml (ml_metrics.json), fetched once here. ----
+function ValidationStudiesView() {
+  const [metrics, setMetrics] = useState<MlMetrics | null>(null);
+  const [mlError, setMlError] = useState<string | null>(null);
+  const [mlLoading, setMlLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setMlLoading(true);
+    try {
+      const r = await fetch('/api/console/ml', { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      const b = await r.json() as { metrics: MlMetrics | null; error?: string };
+      if (r.ok && b.metrics) { setMetrics(b.metrics); setMlError(null); } else { setMlError(b.error ?? 'Could not read ML artifacts.'); }
+    } catch {
+      setMlError('Could not read ML artifacts.');
+    } finally {
+      setMlLoading(false);
+    }
+  }, []);
+  useEffect(() => { const t = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(t); }, [load]);
+
+  return (
+    <>
+      <CollapsibleSection icon={GitCompareArrows} title="Benchmark vs ML · arrival time" subtitle={metrics ? `held-out ${fmtDateOnly(metrics.validation.startUtc)} → ${fmtDateOnly(metrics.validation.endUtc)}` : undefined} defaultOpen>
+        <BenchmarkVsMlBody metrics={metrics} error={mlError} loading={mlLoading} />
+      </CollapsibleSection>
+      <CollapsibleSection icon={Scale} title="By storm regime · benchmark vs ML" subtitle="quiet G0 / G1-G2 / G3-G5" defaultOpen>
+        <ByRegimeBody metrics={metrics} error={mlError} loading={mlLoading} />
+      </CollapsibleSection>
+      <CollapsibleSection icon={Database} title="Data used · validation & studies">
+        <ValidationDataUsedBody />
+      </CollapsibleSection>
+      <CollapsibleSection icon={Timer} title="Worked example · May 2024 G5 storm" subtitle="MRU arrival-time accuracy, validated at Earth">
+        <ArrivalAccuracyBody />
+      </CollapsibleSection>
+      <CollapsibleSection icon={LineChartIcon} title="MRU hindcast · forecast vs actual">
+        <BacktestBody />
+      </CollapsibleSection>
+      <CollapsibleSection icon={Gauge} title="Physical-driver event statistics" subtitle="environmental context, not a model score">
+        <PhysicalDriverEventStatsBody />
+      </CollapsibleSection>
+    </>
   );
 }
 
@@ -2687,13 +3085,13 @@ function SidebarNav({ view, onView }: { view: ConsoleView; onView: (v: ConsoleVi
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-1">
       {item('realtime', Gauge, 'Real-time forecast')}
-      {item('training', Layers, 'Training data')}
+      {item('training', Layers, 'Data Archive')}
       {item('validation', Timer, 'Validation & studies')}
     </div>
   );
 }
 
-function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail, onToggleSeries, sampleTimeUtc, lastSampleAgeMin, displayTimeZone, feedDegraded }: {
+function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail, onToggleSeries, sampleTimeUtc, lastSampleAgeMin, displayTimeZone, feedDegraded, liveSourceLabel, liveSourceConsidered }: {
   view: ConsoleView;
   onView: (v: ConsoleView) => void;
   scales: ScalesDto | null;
@@ -2705,12 +3103,18 @@ function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail,
   lastSampleAgeMin: number | null;
   displayTimeZone: string;
   feedDegraded: boolean;
+  liveSourceLabel: string | null;
+  liveSourceConsidered: LiveSourceDto['considered'];
 }) {
+  // Every source we looked at this poll — full redundancy picture on hover.
+  const sourcesTitle = liveSourceConsidered.length
+    ? liveSourceConsidered.map(s => `${s.label}: ${s.sampleCount} samples${s.latestSampleUtc ? ` · latest ${fmtClock(s.latestSampleUtc, displayTimeZone)}` : ''}${s.errorMessage ? ` · ${s.errorMessage}` : ''}`).join('\n')
+    : undefined;
   return (
     <aside className="flex w-full flex-col gap-3 self-start lg:sticky lg:top-0 lg:w-72 lg:shrink-0">
       <SidebarNav view={view} onView={onView} />
       {view === 'training' ? (
-        <SidebarGroup icon={Layers} title="Training data">
+        <SidebarGroup icon={Layers} title="Data Archive">
           <p className="text-[11px] leading-relaxed text-slate-400">All locally-downloaded historical data, classified by orbit (L1 / GEO / LEO / MEO) and mission, with the dates each package covers.</p>
         </SidebarGroup>
       ) : view === 'validation' ? (
@@ -2754,13 +3158,14 @@ function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail,
         </div>
       </SidebarGroup>
 
-      {/* Live feed status */}
+      {/* Live feed status — the source that won this poll (spacecraft-agnostic) */}
       <SidebarGroup icon={Wind} title="Live feed">
         <div className="flex flex-col gap-1.5 font-mono text-[10px]">
-          <span className="inline-flex items-center gap-1.5 text-slate-400">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            L1 ~1 min (DSCOVR) · auto 60s
+          <span className="inline-flex items-center gap-1.5 text-slate-300" title={sourcesTitle}>
+            <span className={`h-1.5 w-1.5 rounded-full ${feedDegraded ? 'bg-amber-400' : 'animate-pulse bg-emerald-400'}`} />
+            {liveSourceLabel ?? 'L1 source —'}
           </span>
+          <span className="text-slate-600">auto 60s · {liveSourceConsidered.length} source{liveSourceConsidered.length === 1 ? '' : 's'} polled</span>
           {lastSampleAgeMin !== null && (
             <span className="text-slate-500">
               latest {sampleTimeUtc ? fmtClock(sampleTimeUtc, displayTimeZone) : '--:--'}
@@ -2847,6 +3252,11 @@ export function ConsoleScreen() {
   const hitRate = summary && summary.verified > 0 ? Math.round((summary.hits / summary.verified) * 100) : null;
   const lastSampleMs = data?.current?.sampleTimeUtc ? new Date(data.current.sampleTimeUtc).getTime() : null;
   const lastSampleAgeMin = lastSampleMs !== null && nowMs > 0 ? Math.max(0, Math.round((nowMs - lastSampleMs) / 60000)) : null;
+  const feedFreshness = classifyFeedAge(lastSampleAgeMin);
+  const feedBehind = feedFreshness !== 'fresh';
+  // The independent pipeline the server selected for this poll (SWPC active
+  // spacecraft or NASA IMAP I-ALiRT). Shown always, so it's clear what is live.
+  const liveSourceLabel = data?.liveSource?.label ?? null;
   // Which series actually exist in the loaded window — the sidebar dims the rest.
   const seriesAvail: Record<SeriesKey, boolean> = {
     l1: (series?.l1.length ?? 0) > 0,
@@ -2867,7 +3277,7 @@ export function ConsoleScreen() {
           </Link>
           <div>
             <h1 className="text-lg font-semibold text-slate-100">Internal Console</h1>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">L1 → Earth · MRU benchmark · live danger</p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">L1 → Earth · MRU + ML · live danger</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -2895,18 +3305,28 @@ export function ConsoleScreen() {
             lastSampleAgeMin={lastSampleAgeMin}
             displayTimeZone={displayTimeZone}
             feedDegraded={data?.feedDegraded ?? false}
+            liveSourceLabel={liveSourceLabel}
+            liveSourceConsidered={data?.liveSource?.considered ?? []}
           />
 
           {/* Main body */}
           <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {view === 'training' ? <TrainingDataPanel /> : view === 'validation' ? (<>
-            {/* Validation studies: data inventory + arrival-time accuracy + historical hindcast */}
-            <ValidationDataUsedPanel />
-            <PhysicalDriverEventStatsPanel />
-            <ArrivalAccuracyCard />
-            <BacktestPanel />
-            </>) : (<>
-            {data?.current ? <DangerHero current={data.current} /> : (
+            {view === 'training' ? <TrainingDataPanel /> : view === 'validation' ? (
+            /* Validation studies: benchmark-vs-ML headline, regime table, then context panels */
+            <ValidationStudiesView />
+            ) : (<>
+            {feedBehind && lastSampleAgeMin !== null && (
+              <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border px-4 py-2.5 text-xs ${feedFreshness === 'stale' ? 'border-orange-400/40 bg-orange-400/[0.08] text-orange-200' : 'border-amber-400/30 bg-amber-400/[0.07] text-amber-200'}`}>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${feedFreshness === 'stale' ? 'bg-orange-400' : 'bg-amber-400'}`} />
+                <span className="font-semibold uppercase tracking-widest">
+                  {feedFreshness === 'stale' ? 'L1 feed stale' : 'L1 feed delayed'}{liveSourceLabel ? ` · source: ${liveSourceLabel}` : ''} · last sample {data?.current?.sampleTimeUtc ? fmtClock(data.current.sampleTimeUtc, displayTimeZone) : '--:--'} {displayLabel} ({fmtFeedAge(lastSampleAgeMin)} ago)
+                </span>
+                <span className={feedFreshness === 'stale' ? 'text-orange-200/75' : 'text-amber-200/75'}>
+                  No fresher sample from any source (SWPC active spacecraft or NASA IMAP I-ALiRT); the headline forecast and the live transit corridor reflect that sample, not the current minute.
+                </span>
+              </div>
+            )}
+            {data?.current ? <DangerHero current={data.current} muted={feedBehind} /> : (
               <div className="flex h-40 items-center justify-center rounded-xl border border-amber-400/25 bg-amber-400/[0.06] font-mono text-xs uppercase tracking-widest text-amber-200/80">
                 No live L1 solar-wind sample available
               </div>

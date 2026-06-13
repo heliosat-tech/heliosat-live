@@ -4,7 +4,7 @@ import { fetchLiveL1History } from '@/services/liveL1HistoryService';
 import { fetchPlanetaryKpSeries } from '@/services/noaaStormScalesService';
 import { fetchOmniHourlyHistory } from '@/services/omniHistoryService';
 import { fetchAceOmniSamples } from '@/services/l1EarthData';
-import { propagateL1Series, NOMINAL_L1_DISTANCE_KM, type L1Sample } from '@/services/mruForecastService';
+import { propagateL1Series, NOMINAL_BOW_SHOCK_DISTANCE_KM, type L1Sample } from '@/services/mruForecastService';
 import { downsamplePoints, type ForecastHistoryPoint } from '@/services/forecastHistoryService';
 import { classifyGFromKp, kpFromCoupling, mergingFieldMvM } from '@/services/stormScaleService';
 import { readSeriesCache, writeSeriesCache, SERIES_TTL_MS } from '@/services/consoleSeriesCache';
@@ -166,7 +166,7 @@ async function computeSeries(window: string, config: { source: 'live' | 'compare
       l1 = downsamplePoints(ace.samples.map(toPointL1), TARGET);
       const asL1: L1Sample[] = ace.samples.map(s => ({ timeUtc: new Date(s.ms).toISOString(), speedKmS: s.speedKmS, densityPerCm3: s.densityPerCm3, bzNt: s.bzNt, btNt: s.btNt, temperatureK: null }));
       mru = downsamplePoints(
-        propagateL1Series(asL1, NOMINAL_L1_DISTANCE_KM)
+        propagateL1Series(asL1, NOMINAL_BOW_SHOCK_DISTANCE_KM)
           .map(p => ({ t: new Date(p.arrivalTimeUtc).getTime(), speed: p.speedKmS, density: p.densityPerCm3, bt: p.btNt, bz: p.bzNt })),
         TARGET,
       );
@@ -223,7 +223,7 @@ async function computeSeries(window: string, config: { source: 'live' | 'compare
         l1 = downsamplePoints(ace.l1.map(toPoint), TARGET);
         const asL1: L1Sample[] = ace.l1.map(s => ({ timeUtc: new Date(s.ms).toISOString(), speedKmS: s.speed, densityPerCm3: s.density, bzNt: s.bz, btNt: s.bt, temperatureK: null }));
         mru = downsamplePoints(
-          propagateL1Series(asL1, NOMINAL_L1_DISTANCE_KM)
+          propagateL1Series(asL1, NOMINAL_BOW_SHOCK_DISTANCE_KM)
             .map(p => ({ t: new Date(p.arrivalTimeUtc).getTime(), speed: p.speedKmS, density: p.densityPerCm3, bt: p.btNt, bz: p.bzNt }))
             .filter(p => p.t >= start && p.t <= stop),
           TARGET,
@@ -251,7 +251,7 @@ async function computeSeries(window: string, config: { source: 'live' | 'compare
   const start = nowMs - config.days * DAY;
   const l1Points = samples.filter(s => s.ms >= start).map(toPointL1);
   const asL1: L1Sample[] = samples.map(s => ({ timeUtc: new Date(s.ms).toISOString(), speedKmS: s.speedKmS, densityPerCm3: s.densityPerCm3, bzNt: s.bzNt, btNt: s.btNt, temperatureK: null }));
-  const mruRaw = propagateL1Series(asL1, history.distanceKm)
+  const mruRaw = propagateL1Series(asL1, history.mruDistanceKm)
     .map(p => ({ t: new Date(p.arrivalTimeUtc).getTime(), speed: p.speedKmS, density: p.densityPerCm3, bt: p.btNt, bz: p.bzNt }))
     .filter(p => p.t >= start);
   const mru = downsamplePoints(mruRaw, TARGET);

@@ -1,5 +1,5 @@
 import { fetchLiveL1History } from './liveL1HistoryService';
-import { propagateL1Series, NOMINAL_L1_DISTANCE_KM, type L1Sample } from './mruForecastService';
+import { propagateL1Series, NOMINAL_BOW_SHOCK_DISTANCE_KM, type L1Sample } from './mruForecastService';
 import { sliceArchive } from './omniArchiveStore';
 import { sliceAceArchive } from './aceArchiveStore';
 import type { L1EventSample } from './liveEventService';
@@ -274,7 +274,7 @@ async function buildTransitCorridorPoints(source: 'live' | 'archive', days: numb
 
   const history = await fetchLiveL1History();
   const liveSamples = history.samples.slice().sort((a, b) => a.ms - b.ms);
-  const liveCandidates = candidatesFromL1(liveSamples, history.distanceKm, start, now, 'swpc_rtsw', LIVE_SOURCE_LABEL, 1);
+  const liveCandidates = candidatesFromL1(liveSamples, history.mruDistanceKm, start, now, 'swpc_rtsw', LIVE_SOURCE_LABEL, 1);
 
   if (source === 'live') {
     const times = [...new Set(liveCandidates.map(candidate => candidate.timeMs))]
@@ -287,7 +287,7 @@ async function buildTransitCorridorPoints(source: 'live' | 'archive', days: numb
   const omni = await sliceArchive(start, now);
   if (omni && omni.samples.length > 0) candidates.push(...omni.samples.map(arrivalAlignedArchiveCandidate));
   const ace = await sliceAceArchive(start, now);
-  if (ace && ace.samples.length > 0) candidates.push(...candidatesFromL1(ace.samples, NOMINAL_L1_DISTANCE_KM, start, now, 'ace_archive', ACE_SOURCE_LABEL, 2));
+  if (ace && ace.samples.length > 0) candidates.push(...candidatesFromL1(ace.samples, NOMINAL_BOW_SHOCK_DISTANCE_KM, start, now, 'ace_archive', ACE_SOURCE_LABEL, 2));
   candidates.push(...liveCandidates);
 
   const points = buildHourlyBins(start, now).map(t => pointFromResolved(t, candidates, ARCHIVE_ALIGNMENT_TOLERANCE_MS));
