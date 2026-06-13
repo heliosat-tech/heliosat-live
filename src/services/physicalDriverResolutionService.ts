@@ -2,6 +2,8 @@ import { classifyGFromKp, kpFromCoupling } from './stormScaleService';
 
 export type PhysicalDriverSourceId =
   | 'swpc_rtsw'
+  | 'swpc_legacy'
+  | 'imap_ialirt'
   | 'dscovr'
   | 'ace'
   | 'ace_archive'

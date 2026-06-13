@@ -3,14 +3,17 @@ import { getCurrentAdminState } from '@/lib/supabase/admin';
 import { fetchLiveL1History } from '@/services/liveL1HistoryService';
 import { fetchPlanetaryKpSeries, fetchNoaaStormScales } from '@/services/noaaStormScalesService';
 import { classifyGFromKp, kpFromCoupling, mergingFieldMvM } from '@/services/stormScaleService';
-import { propagateL1Sample } from '@/services/mruForecastService';
+import { propagateL1Sample, RE_KM } from '@/services/mruForecastService';
 import { buildForecastLog, normalizeCadence } from '@/services/consoleForecastLog';
+import { predictArrivalResiduals, BSN_X_RE_NOMINAL, ETA_BAND_ML_MIN, ETA_BAND_MRU_MIN, type MlInputSample } from '@/services/arrivalResidualMlService';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const maxDuration = 120;
 
 const DANGER_WINDOW_MS = 30 * 60 * 1000; // trailing window for a stable "now" danger
+// Trailing window of live samples sent to the ML model — enough for the 3 h rolling features.
+const ML_FEATURE_WINDOW_MS = 4 * 60 * 60 * 1000;
 function round(value: number, digits = 1) {
   const scale = 10 ** digits;
   return Math.round(value * scale) / scale;
@@ -63,6 +66,12 @@ export async function GET(request: Request) {
     distanceIsMeasured: boolean;
     lagMinutes: number | null;
     arrivalUtc: string | null;
+    // ML residual correction (bow-shock-nose basis). mlApplied=false => headline is raw MRU.
+    mlApplied: boolean;
+    mruDelayMin: number | null;
+    correctedDelayMin: number | null;
+    mlResidualMin: number | null;
+    etaBandMin: number | null;
     danger: { level: number; code: string; label: string; estKp: number | null; fraction: number };
   } | null = null;
 
@@ -100,8 +109,45 @@ export async function GET(request: Request) {
         btNt: latest.btNt,
         temperatureK: null,
       },
-      history.distanceKm,
+      history.mruDistanceKm,
     );
+
+    // ---- ML arrival-residual correction (best-effort) ----
+    // corrected_delay = mru_delay + g(features), applied exactly as offline. Features are
+    // built and predicted in Python from the trailing window (km->Re position, same units as
+    // training). Falls back to raw MRU when the position/By features are missing, the rolling
+    // window lacks >=3 h of history, or the model is unavailable — never blocks the forecast.
+    const pos = history.scPositionGseKm;
+    const mlInput: MlInputSample[] = pos
+      ? samples
+          .filter(s => latest.ms - s.ms <= ML_FEATURE_WINDOW_MS)
+          .map(s => ({
+            time: new Date(s.ms).toISOString(),
+            speed_km_s: s.speedKmS,
+            density_p_cc: s.densityPerCm3,
+            bmag_nt: s.btNt,
+            bz_gsm_nt: s.bzNt,
+            by_gsm_nt: s.byNt,
+            sc_x_re: pos.x / RE_KM,
+            sc_y_re: pos.y / RE_KM,
+            sc_z_re: pos.z / RE_KM,
+          }))
+      : [];
+    const mlByTime = mlInput.length > 0 ? await predictArrivalResiduals(mlInput, BSN_X_RE_NOMINAL) : null;
+    const mlLatest = mlByTime?.get(new Date(latest.ms).toISOString()) ?? null;
+
+    // Option A: the displayed MRU is the model's bow-shock-nose delay ((sc_x-bsn_x)/V) so MRU
+    // and MRU+ML share one basis and differ only by g. When no position is available we fall
+    // back to the raw |pos| ballistic delay as the benchmark, and ML does not apply.
+    const bowShockMruMin = mlLatest?.mruDelayMin ?? null;
+    const rawMruMin = propagated ? propagated.lagMinutes : null;
+    const benchmarkMruMin = bowShockMruMin ?? rawMruMin;
+    const correctedMin = mlLatest?.complete && mlLatest.correctedDelayMin !== null ? mlLatest.correctedDelayMin : null;
+    const mlApplied = correctedMin !== null;
+    const headlineDelayMin = correctedMin ?? benchmarkMruMin;
+    const headlineArrivalUtc = headlineDelayMin !== null
+      ? new Date(latest.ms + headlineDelayMin * 60000).toISOString()
+      : (propagated ? propagated.arrivalTimeUtc : null);
 
     current = {
       sampleTimeUtc: new Date(latest.ms).toISOString(),
@@ -123,8 +169,13 @@ export async function GET(request: Request) {
       qualityFlags: latest.qualityFlags ?? [],
       l1DistanceKm: Math.round(history.distanceKm),
       distanceIsMeasured: history.distanceIsMeasured,
-      lagMinutes: propagated ? Math.round(propagated.lagMinutes) : null,
-      arrivalUtc: propagated ? propagated.arrivalTimeUtc : null,
+      lagMinutes: headlineDelayMin !== null ? Math.round(headlineDelayMin) : null,
+      arrivalUtc: headlineArrivalUtc,
+      mlApplied,
+      mruDelayMin: benchmarkMruMin !== null ? round(benchmarkMruMin, 1) : null,
+      correctedDelayMin: correctedMin !== null ? round(correctedMin, 1) : null,
+      mlResidualMin: mlLatest?.residualMin ?? null,
+      etaBandMin: mlApplied ? ETA_BAND_ML_MIN : (benchmarkMruMin !== null ? ETA_BAND_MRU_MIN : null),
       danger: { level: g.level, code: g.code, label: g.label, estKp: estKp === null ? null : round(estKp, 1), fraction: estKp === null ? 0 : Math.max(0, Math.min(1, estKp / 9)) },
     };
   }
@@ -169,7 +220,7 @@ export async function GET(request: Request) {
     if (latest && latest.ms - s.ms > INBOUND_LOOKBACK_MS) continue;
     const prop = propagateL1Sample(
       { timeUtc: new Date(s.ms).toISOString(), speedKmS: s.speedKmS, densityPerCm3: s.densityPerCm3, bzNt: s.bzNt, btNt: s.btNt, temperatureK: null },
-      history.distanceKm,
+      history.mruDistanceKm,
     );
     if (!prop) continue;
     const arrivalMs = new Date(prop.arrivalTimeUtc).getTime();
@@ -239,7 +290,22 @@ export async function GET(request: Request) {
       cadence: log.cadence,
       forecasts: log.rows,
       summary: log.summary,
-      feedDegraded: history.samples.length === 0 || !!history.errorMessage,
+      // Which independent pipeline won this poll, its age, and every source we
+      // considered (so the UI can always show what is live).
+      liveSource: {
+        id: history.sourceId,
+        label: history.sourceLabel,
+        sampleAgeMinutes: history.latestSampleAgeMinutes,
+        freshness: history.freshness,
+        considered: history.consideredSources.map(source => ({
+          id: source.sourceId,
+          label: source.sourceLabel,
+          sampleCount: source.sampleCount,
+          latestSampleUtc: source.latestSampleMs !== null ? new Date(source.latestSampleMs).toISOString() : null,
+          errorMessage: source.errorMessage,
+        })),
+      },
+      feedDegraded: history.samples.length === 0 || !!history.errorMessage || history.freshness !== 'fresh',
       warnings: [history.errorMessage, scales.errorMessage].filter(Boolean),
     },
     { headers: { 'Cache-Control': 'no-store' } },

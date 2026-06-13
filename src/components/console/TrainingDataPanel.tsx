@@ -246,7 +246,7 @@ export function TrainingDataPanel() {
         <div className="flex items-center gap-3">
           <Layers className="h-5 w-5 text-cyan-300" aria-hidden="true" />
           <div>
-            <h1 className="text-lg font-semibold text-slate-100">Training data · local historical archive</h1>
+            <h1 className="text-lg font-semibold text-slate-100">Data Archive · local historical record</h1>
             <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">
               everything downloaded locally · classified by orbit · UTC dates
             </p>

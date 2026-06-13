@@ -69,7 +69,7 @@ function forecastGLevel(sample: L1EventSample): number {
 const round1 = (v: number) => Math.round(v * 10) / 10;
 
 export function buildForecastLog(
-  history: { samples: L1EventSample[]; distanceKm: number },
+  history: { samples: L1EventSample[]; mruDistanceKm: number },
   kpSeries: Array<{ ms: number; kp: number }>,
   cadence: ForecastCadence,
 ): ForecastLogResult {
@@ -116,7 +116,7 @@ export function buildForecastLog(
     const iso = new Date(s.ms).toISOString();
     const propagated = propagateL1Sample(
       { timeUtc: iso, speedKmS: s.speedKmS, densityPerCm3: s.densityPerCm3, bzNt: s.bzNt, btNt: s.btNt, temperatureK: null },
-      history.distanceKm,
+      history.mruDistanceKm,
     );
     const em = mergingFieldMvM(s.speedKmS, s.bzNt);
     const estKp = kpFromCoupling(em, s.speedKmS);

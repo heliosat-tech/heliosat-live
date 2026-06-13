@@ -25,6 +25,11 @@ interface CurrentDto {
   distanceIsMeasured: boolean;
   lagMinutes: number | null;
   arrivalUtc: string | null;
+  mlApplied?: boolean;
+  mruDelayMin?: number | null;
+  correctedDelayMin?: number | null;
+  mlResidualMin?: number | null;
+  etaBandMin?: number | null;
   danger: DangerDto;
 }
 interface ScaleVal { level: number; code: string; label: string }
@@ -126,7 +131,16 @@ interface ConsoleResponse {
   forecasts: ForecastRowDto[];
   summary: { total: number; verified: number; pending: number; hits: number; avgRating: number | null };
   feedDegraded: boolean;
+  liveSource?: LiveSourceDto;
   warnings: string[];
+}
+// Which independent L1 pipeline (SWPC active spacecraft / NASA IMAP I-ALiRT) won this poll.
+interface LiveSourceDto {
+  id: string | null;
+  label: string | null;
+  sampleAgeMinutes: number | null;
+  freshness: 'fresh' | 'degraded' | 'stale';
+  considered: Array<{ id: string; label: string; sampleCount: number; latestSampleUtc: string | null; errorMessage: string | null }>;
 }
 
 // Danger palette: green (quiet) -> red (extreme), indexed by NOAA G level 0..5.
@@ -183,43 +197,56 @@ function Stat({ label, value, unit }: { label: string; value: string; unit?: str
   );
 }
 
-function DangerHero({ current }: { current: CurrentDto }) {
+function DangerHero({ current, muted = false }: { current: CurrentDto; muted?: boolean }) {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
   const d = current.danger;
   const riskAvailable = current.riskAvailable ?? true;
   const style = dangerStyle(riskAvailable ? d.level : 0);
+  // When the L1 feed is behind, the headline reflects an old sample, not "now". Grey it
+  // so a stale G0 never reads as a confident current all-clear.
+  const colored = riskAvailable && !muted;
   const headline = !riskAvailable
     ? 'G-risk unavailable — required L1 physical variables are missing'
+    : muted
+    ? 'Feed delayed — headline reflects the last received L1 sample, not the current minute'
     : d.level === 0
     ? 'Quiet — northward/weak field, nominal wind'
     : `${d.code} ${style.word.toLowerCase()} geomagnetic storm expected`;
   return (
     <section
-      className={`rounded-xl border p-5 shadow-2xl ${riskAvailable ? style.chip.split(' ')[0] : 'border-slate-700/60 text-slate-300'}`}
-      style={{ background: `radial-gradient(120% 140% at 0% 0%, ${riskAvailable ? style.glow : 'rgba(51,65,85,0.16)'}, rgba(2,6,23,0.6) 60%)` }}
+      className={`rounded-xl border p-5 shadow-2xl ${colored ? style.chip.split(' ')[0] : 'border-slate-700/60 text-slate-300'}`}
+      style={{ background: `radial-gradient(120% 140% at 0% 0%, ${colored ? style.glow : 'rgba(51,65,85,0.16)'}, rgba(2,6,23,0.6) 60%)` }}
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">Main forecast · 30-min L1 average</div>
-          <div className={`mt-1 flex items-baseline gap-3 ${riskAvailable ? style.text : 'text-slate-300'}`}>
+          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">Main forecast · 30-min L1 average{muted ? ' · feed delayed' : ''}</div>
+          <div className={`mt-1 flex items-baseline gap-3 ${colored ? style.text : 'text-slate-400'}`}>
             <span className="font-mono text-4xl font-semibold tracking-wider">{riskAvailable ? (d.level === 0 ? 'G0' : d.code) : '—'}</span>
             <span className="text-xl font-semibold uppercase tracking-widest">{riskAvailable ? style.word : 'Risk unavailable'}</span>
           </div>
           <p className="mt-1 max-w-xl text-sm text-slate-300">{headline}</p>
         </div>
         <div className="text-right">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">Avg. parcel reaches Earth</div>
+          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+            Avg. parcel reaches Earth · {current.mlApplied ? 'MRU + ML' : 'MRU'}
+          </div>
           <div className="font-mono text-2xl font-semibold text-slate-100">
             {current.lagMinutes !== null ? `${current.lagMinutes} min` : '—'}
+            {current.etaBandMin != null && current.lagMinutes !== null && (
+              <span className="ml-1 text-sm font-normal text-slate-400">± {Math.round(current.etaBandMin)}</span>
+            )}
           </div>
           <div className="font-mono text-xs text-cyan-200">{current.arrivalUtc ? `${fmtClock(current.arrivalUtc, timeZone)} ${tzLabel}` : '—'}</div>
+          {current.mlApplied && current.mlResidualMin != null && (
+            <div className="font-mono text-[9px] text-slate-500">ML {current.mlResidualMin >= 0 ? '+' : ''}{current.mlResidualMin.toFixed(1)} min vs MRU</div>
+          )}
         </div>
       </div>
 
       {/* Danger gradient bar */}
       <div className="mt-4">
         <div className="relative h-3 w-full overflow-hidden rounded-full border border-slate-700/60" style={{ background: 'linear-gradient(90deg,#34d399 0%,#a3e635 20%,#fbbf24 45%,#fb923c 65%,#f87171 82%,#e879f9 100%)' }}>
-          {riskAvailable && <div className="absolute top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-white shadow" style={{ left: `calc(${(d.fraction * 100).toFixed(1)}% - 2px)` }} />}
+          {riskAvailable && <div className={`absolute top-1/2 h-5 w-1 -translate-y-1/2 rounded-full shadow ${muted ? 'bg-white/40' : 'bg-white'}`} style={{ left: `calc(${(d.fraction * 100).toFixed(1)}% - 2px)` }} />}
         </div>
         <div className="mt-1 flex justify-between font-mono text-[8px] uppercase tracking-widest text-slate-600">
           <span>Quiet</span><span>G1</span><span>G2</span><span>G3</span><span>G4</span><span>G5</span>
@@ -246,13 +273,6 @@ function DangerHero({ current }: { current: CurrentDto }) {
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
-}
-
-function fmtCompactKm(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return '—';
-  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(value) >= 10_000) return `${Math.round(value / 1000)}k`;
-  return Math.round(value).toLocaleString('en-US');
 }
 
 function fmtCountdown(ms: number) {
@@ -336,13 +356,47 @@ const CORRIDOR_WINDOWS: Array<{ key: string; label: string }> = [
   { key: '90d', label: '3 mo' },
   { key: '1y', label: '1 y' },
 ];
+
+// Corridor replay series cached per window for the whole page session, so re-selecting
+// or switching between windows is instant. The cache is module-level (not per-component)
+// so it survives any remount. The windows are NOT subsets of one another at the same
+// resolution — each is downsampled to a fixed point budget over its own span, so a 24 h
+// view sliced out of the 3 mo data would be far too coarse. Hence each is fetched natively
+// and cached on its own; a background prefetch warms the rest after the first one opens.
+const REPLAY_CACHE = new Map<string, ReplaySeries>();
+async function loadCorridorWindow(windowKey: string): Promise<ReplaySeries | null> {
+  const cached = REPLAY_CACHE.get(windowKey);
+  if (cached) return cached;
+  try {
+    const r = await fetch(`/api/console/corridor?window=${windowKey}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    if (!r.ok) return null;
+    const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[]; coverage?: TransitCoverageDiagnostics };
+    const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t), coverage: s.coverage };
+    REPLAY_CACHE.set(windowKey, series);
+    return series;
+  } catch {
+    return null;
+  }
+}
 const NO_DATA_FILL = '#334155';
 
-// NOAA RTSW nominally publishes ~1 sample/min. Past this, the newest L1 sample is treated
-// as stale: the live transit corridor only shows parcels still in flight, so when the feed
-// lags the newest parcel has already "arrived" and the live view empties out. We surface
-// the lag explicitly instead of rendering a bare "no data" state.
-const STALE_FEED_THRESHOLD_MIN = 20;
+// NOAA RTSW nominally publishes ~1 sample/min. We grade the newest L1 sample's age into
+// three tiers so the console never presents a lagging sample as the confident current
+// state (the origin feed is ~hours behind at times):
+//   fresh    < 20 min   — trust the headline as "now"
+//   degraded 20–60 min  — usable but flagged; mute the headline G-level
+//   stale    > 60 min   — do not read as current
+// When the feed lags, the live transit corridor also empties (the newest parcel has
+// already "arrived"), so we surface the age explicitly instead of a bare "no data" state.
+const FEED_DEGRADED_AFTER_MIN = 20;
+const FEED_STALE_AFTER_MIN = 60;
+type FeedFreshness = 'fresh' | 'degraded' | 'stale';
+function classifyFeedAge(min: number | null): FeedFreshness {
+  if (min === null) return 'fresh';
+  if (min > FEED_STALE_AFTER_MIN) return 'stale';
+  if (min > FEED_DEGRADED_AFTER_MIN) return 'degraded';
+  return 'fresh';
+}
 
 /** Compact age, e.g. "12 min" or "5 h 11 min". */
 function fmtFeedAge(min: number): string {
@@ -620,45 +674,51 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
   const arrivalMs = current.arrivalUtc ? new Date(current.arrivalUtc).getTime() : Number.NaN;
   const hasTransit = Number.isFinite(sampleMs) && Number.isFinite(arrivalMs) && arrivalMs > sampleMs && current.speedKmS !== null;
   const effectiveNow = nowMs > 0 ? nowMs : sampleMs;
-  const progress = hasTransit ? clamp01((effectiveNow - sampleMs) / (arrivalMs - sampleMs)) : 0;
   const totalTransitMs = hasTransit ? arrivalMs - sampleMs : null;
   const remainingMs = hasTransit ? Math.max(0, arrivalMs - effectiveNow) : null;
-  const remainingKm = hasTransit ? current.l1DistanceKm * (1 - progress) : null;
-  const elapsedKm = hasTransit ? current.l1DistanceKm * progress : null;
   const lagMin = current.lagMinutes;
 
   // ---- Replay state ----
   const [windowKey, setWindowKey] = useState('live');
   const [replay, setReplay] = useState<ReplaySeries | null>(null);
-  const replayCache = useRef<Map<string, ReplaySeries>>(new Map());
+  const prefetchedRef = useRef(false);
   const isReplay = windowKey !== 'live';
   // Trust the loaded series only if it matches the current window (avoids a stale flash).
   const activeReplay = isReplay && replay && replay.window === windowKey ? replay : null;
   const replayLoading = isReplay && !activeReplay;
   const span = activeReplay ? Math.max(1, activeReplay.endMs - activeReplay.startMs) : 1;
 
-  // Load the forecast-G history from the lightweight corridor endpoint. Cached per window in
-  // a ref, so re-selecting a window already downloaded is instant. Every setState runs inside
-  // the async callback, so the effect never sets state synchronously.
+  // Select a window. A cache hit is applied here in the event handler (instant, no loading
+  // flash); the effect below fetches on a miss. Routing both through the module cache means
+  // an already-loaded window — including one warmed by the background prefetch — is instant.
+  const selectWindow = useCallback((key: string) => {
+    setWindowKey(key);
+    const cached = REPLAY_CACHE.get(key);
+    if (cached) setReplay(cached);
+  }, []);
+
   useEffect(() => {
     if (windowKey === 'live') return;
     let cancelled = false;
-    (async () => {
-      const cached = replayCache.current.get(windowKey);
-      if (cached) { if (!cancelled) setReplay(cached); return; }
-      try {
-        const r = await fetch(`/api/console/corridor?window=${windowKey}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
-        if (!r.ok || cancelled) return;
-        const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[]; coverage?: TransitCoverageDiagnostics };
-        if (cancelled) return;
-        const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t), coverage: s.coverage };
-        replayCache.current.set(windowKey, series);
-        setReplay(series);
-      } catch {
-        /* leave empty -> "no data" state */
+    // loadCorridorWindow resolves the cached series immediately on a hit (same reference,
+    // so this setReplay is a no-op re-render) and fetches once on a miss.
+    void loadCorridorWindow(windowKey).then(series => { if (!cancelled && series) setReplay(series); });
+    return () => { cancelled = true; };
+  }, [windowKey]);
+
+  // The first time any replay window is opened, warm the OTHER windows in the background
+  // (sequential + throttled, cache-aware) so switching between them is then instant. Fire-
+  // and-forget: it only fills the module cache, never component state, so it needn't cancel.
+  useEffect(() => {
+    if (windowKey === 'live' || prefetchedRef.current) return;
+    prefetchedRef.current = true;
+    void (async () => {
+      for (const { key } of CORRIDOR_WINDOWS) {
+        if (key === 'live' || REPLAY_CACHE.has(key)) continue;
+        await loadCorridorWindow(key);
+        await new Promise(resolve => setTimeout(resolve, 400));
       }
     })();
-    return () => { cancelled = true; };
   }, [windowKey]);
 
   // Evenly-spaced date ticks under the heatmap.
@@ -782,7 +842,7 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
   // still in transit (it already "arrived"), so the live corridor empties. Detect it here
   // so the empty state can say "feed behind" rather than the cryptic "no forecast data".
   const feedAgeMin = Number.isFinite(sampleMs) && nowMs > 0 ? Math.max(0, Math.round((nowMs - sampleMs) / 60000)) : null;
-  const feedStale = !isReplay && feedAgeMin !== null && feedAgeMin > STALE_FEED_THRESHOLD_MIN;
+  const feedStale = !isReplay && feedAgeMin !== null && feedAgeMin > FEED_DEGRADED_AFTER_MIN;
 
   const tile = (label: string, value: ReactNode, accent = false) => (
     <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2">
@@ -818,7 +878,7 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="inline-flex overflow-hidden rounded-md border border-slate-700/60">
           {CORRIDOR_WINDOWS.map(w => (
-            <button key={w.key} type="button" onClick={() => setWindowKey(w.key)}
+            <button key={w.key} type="button" onClick={() => selectWindow(w.key)}
               className={`px-2 py-1 font-mono text-[9px] uppercase tracking-widest transition ${windowKey === w.key ? 'bg-cyan-400/15 text-cyan-100' : 'text-slate-400 hover:text-slate-200'}`}>
               {w.label}
             </button>
@@ -851,8 +911,14 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
       ) : feedStale && feedAgeMin !== null ? (
         <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-400/30 bg-amber-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-amber-200">
           <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-          L1 feed behind by {fmtFeedAge(feedAgeMin)}
-          <span className="text-amber-200/70">· newest sample {current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} {tzLabel} · nothing currently in transit</span>
+          L1 feed delayed · last sample {current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} {tzLabel} ({fmtFeedAge(feedAgeMin)} ago)
+          <span className="text-amber-200/70">· nothing currently in transit</span>
+        </div>
+      ) : !isReplay && Number.isFinite(sampleMs) ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: NO_DATA_FILL }} />
+          Nothing currently in transit
+          <span className="text-slate-500">· last L1 sample {current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} {tzLabel}{feedAgeMin !== null ? ` (${fmtFeedAge(feedAgeMin)} ago)` : ''}</span>
         </div>
       ) : (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
@@ -961,21 +1027,7 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
             {tile('Detected at L1', <>{current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>)}
             {tile('Bow-shock ETA', <>{current.arrivalUtc ? fmtClock(current.arrivalUtc, timeZone) : '--:--'} <span className="text-[8px] text-slate-500">{tzLabel}</span></>, true)}
             {tile('Countdown', remainingMs !== null ? fmtCountdown(remainingMs) : '—')}
-            {tile('Distance left', <>{fmtCompactKm(remainingKm)} <span className="text-[8px] text-slate-500">km</span></>)}
-          </div>
-          <div className="mt-2 grid gap-2 text-[10px] sm:grid-cols-3">
-            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
-              <span className="uppercase tracking-widest text-slate-600">Travelled</span>
-              <span className="ml-2 text-slate-200">{fmtCompactKm(elapsedKm)} km</span>
-            </div>
-            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
-              <span className="uppercase tracking-widest text-slate-600">Total L1 path</span>
-              <span className="ml-2 text-slate-200">{fmtCompactKm(current.l1DistanceKm)} km</span>
-            </div>
-            <div className="rounded border border-slate-800 bg-slate-950/45 p-2 font-mono text-slate-400">
-              <span className="uppercase tracking-widest text-slate-600">Transit model</span>
-              <span className="ml-2 text-slate-200">MRU {totalTransitMs !== null ? fmtCountdown(totalTransitMs) : '—'}</span>
-            </div>
+            {tile('Transit model', <>{current.mlApplied ? 'MRU + ML' : 'MRU'} {totalTransitMs !== null ? fmtCountdown(totalTransitMs) : '—'}</>)}
           </div>
           {!hasTransit && (
             <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Need a valid L1 speed and Earth-arrival estimate to project the corridor.</p>
@@ -1275,38 +1327,60 @@ function GeoAvailablePlot({ plot }: { plot: GeoPlotDto }) {
   );
 }
 
+// The deck is intentionally trimmed to three GOES products: XRS long channel, >2 MeV
+// integral electrons, and the magnetometer field magnitude. Each comes from primary when
+// available, secondary as a fallback. Plot ids are `goes-<role>-<kind>`.
+const GEO_DECK_KINDS = ['xrs-long', 'electrons-2mev', 'mag-total'] as const;
+function pickDeckPlots(active: GeoPlotDto[]): GeoPlotDto[] {
+  const byId = new Map(active.map(plot => [plot.id, plot]));
+  return GEO_DECK_KINDS
+    .map(kind => byId.get(`goes-primary-${kind}`) ?? byId.get(`goes-secondary-${kind}`) ?? null)
+    .filter((plot): plot is GeoPlotDto => plot !== null);
+}
+
 function GeoAvailablePlots({ plots }: { plots: GeoPlotDto[] }) {
+  // Collapsed by default — the GOES deck is secondary context, not the headline.
+  const [open, setOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const activePlots = plots.filter(plot => plot.points.some(point => point.value !== null));
-  const spacecraft = Array.from(new Set(activePlots.map(plot => plot.spacecraft))).join(' / ');
+  const deckPlots = pickDeckPlots(activePlots);
+  const spacecraft = Array.from(new Set(deckPlots.map(plot => plot.spacecraft))).join(' / ');
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
+    <div className="flex flex-col rounded-lg border border-slate-800 bg-slate-950/30">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="flex w-full flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-left">
+        <div className="flex items-center gap-2">
+          <ChevronRight className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
           <div>
-            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-slate-300">GEO · all available GOES plots</h4>
+            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-slate-300">GEO · GOES deck</h4>
             <p className="mt-0.5 font-mono text-[9px] uppercase tracking-widest text-slate-600">
-              SWPC 6h primary/secondary JSON{spacecraft ? ` · ${spacecraft}` : ''}
+              XRS 0.1–0.8 nm · &gt;2 MeV electrons · MAG |H|{spacecraft ? ` · ${spacecraft}` : ''}
             </p>
           </div>
-          <button type="button" onClick={() => setInfoOpen(o => !o)} aria-expanded={infoOpen} title="What does each GOES plot and unit mean?"
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors ${infoOpen ? 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200' : 'border-slate-700/60 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-200'}`}>
-            <Info className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
         </div>
         <span className="rounded border border-cyan-400/25 bg-cyan-400/10 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-cyan-200">
-          {activePlots.length} plots
+          {deckPlots.length} plots
         </span>
-      </div>
-      {infoOpen && <GeoPlotsInfo />}
-      {activePlots.length > 0 ? (
-        <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
-          {activePlots.map(plot => <GeoAvailablePlot key={plot.id} plot={plot} />)}
-        </div>
-      ) : (
-        <div className="flex h-24 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/40 px-4 text-center font-mono text-[10px] uppercase tracking-widest text-slate-600">
-          No live GEO plot-ready GOES data available
+      </button>
+      {open && (
+        <div className="flex flex-col gap-3 px-3 pb-3">
+          <div className="flex items-center justify-end">
+            <button type="button" onClick={() => setInfoOpen(o => !o)} aria-expanded={infoOpen} title="What does each GOES plot and unit mean?"
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors ${infoOpen ? 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200' : 'border-slate-700/60 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-200'}`}>
+              <Info className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+          {infoOpen && <GeoPlotsInfo />}
+          {deckPlots.length > 0 ? (
+            <div className="grid gap-3 lg:grid-cols-3">
+              {deckPlots.map(plot => <GeoAvailablePlot key={plot.id} plot={plot} />)}
+            </div>
+          ) : (
+            <div className="flex h-24 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/40 px-4 text-center font-mono text-[10px] uppercase tracking-widest text-slate-600">
+              No live GEO plot-ready GOES data available
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1520,7 +1594,7 @@ function ChartsSection({ series, windowKey, onWindow, open, onToggle, loading, v
                   ? 'L1 solar wind — OMNI (shifted to Earth) + ACE (upstream), historical'
                   : series.source === 'compare'
                     ? 'L1 solar wind — ACE (upstream) + MRU forecast vs OMNI (L1 at Earth)'
-                    : 'L1 solar wind — DSCOVR (upstream) + MRU forecast'}
+                    : 'L1 solar wind — active RTSW source (upstream) + MRU forecast'}
               </div>
               {(windowKey === '30d' || windowKey === '1y' || windowKey === '5y') && <ArchiveControl onBuilt={onRefresh} />}
             </div>
@@ -1539,8 +1613,8 @@ function ChartsSection({ series, windowKey, onWindow, open, onToggle, loading, v
                 ? 'All lines are L1-class solar wind (it is only measured at L1 — there is none in GEO/MEO/LEO). Orange = OMNI (the L1 wind shifted to Earth, the complete record); green dashed = ACE upstream at L1 (its plasma sensor died Jul-2024, so speed/density show via OMNI). The G chart compares the G the wind implied vs the observed Kp.'
                 : series.source === 'compare'
                   ? 'All L1-class solar wind: green = ACE upstream at L1, cyan = the MRU forecast (L1 propagated to Earth), orange = OMNI (the L1 wind shifted to Earth). Anchored to today; the recent tail is blank where OMNI has not arrived yet (~3 weeks).'
-                  : 'All L1-class: green dashed = DSCOVR upstream at L1; cyan = the MRU forecast at its Earth-arrival time. OMNI (L1 shifted to Earth) lags ~2–3 weeks, so it only appears on the 30-day+ ranges. The G chart compares forecast G vs observed Kp — but Kp publishes in 3-hour bins and the forecast runs ~1 h ahead (wind still in transit), so the shaded tail has no observed Kp yet.'}{' '}
-              The GEO deck lists every currently wired GOES primary/secondary plot: MAG Hn/Hp/|H|, integral electrons, integral protons, and XRS.
+                  : 'All L1-class: green dashed = the active RTSW source upstream at L1; cyan = the MRU forecast at its Earth-arrival time. OMNI (L1 shifted to Earth) lags ~2–3 weeks, so it only appears on the 30-day+ ranges. The G chart compares forecast G vs observed Kp — but Kp publishes in 3-hour bins and the forecast runs ~1 h ahead (wind still in transit), so the shaded tail has no observed Kp yet.'}{' '}
+              The collapsed GEO deck keeps three GOES products — XRS 0.1–0.8 nm, &gt;2 MeV electrons, and MAG |H| — from primary (secondary as fallback).
             </p>
           </div>
         ) : loading ? (
@@ -2670,51 +2744,6 @@ interface NowcastDto {
   warning: string | null;
 }
 
-function NowcastChart({ title, unit, variable, dto }: { title: string; unit: string; variable: 'speed' | 'bz'; dto: NowcastDto }) {
-  const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
-  const data = useMemo(() => {
-    const map = new Map<number, { t: number; detected: number | null; forecast: number | null }>();
-    const key = (t: number) => Math.round(t / 60000) * 60000;
-    for (const p of dto.l1) { const k = key(p.t); const r = map.get(k) ?? { t: k, detected: null, forecast: null }; r.detected = p[variable]; map.set(k, r); }
-    for (const p of dto.mru) { const k = key(p.t); const r = map.get(k) ?? { t: k, detected: null, forecast: null }; r.forecast = p[variable]; map.set(k, r); }
-    return [...map.values()].sort((a, b) => a.t - b.t);
-  }, [dto, variable]);
-  const lastT = data.length ? data[data.length - 1].t : dto.now;
-  const axisMin = dto.startMs;
-  const axisMax = Math.max(dto.now + 5 * 60000, lastT);
-  const span = axisMax - axisMin;
-  const has = data.some(d => d.detected !== null || d.forecast !== null);
-  return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <h4 className="text-[11px] font-semibold uppercase tracking-widest text-slate-300">{title}</h4>
-        <div className="flex items-center gap-2 font-mono text-[8px] uppercase tracking-widest">
-          <span className="flex items-center gap-1 text-emerald-200"><span className="h-0.5 w-3" style={{ backgroundColor: DETECTED_COLOR }} />L1 now</span>
-          <span className="flex items-center gap-1 text-cyan-200"><span className="h-0.5 w-3 border-t border-dashed" style={{ borderColor: MRU_COLOR }} />inbound</span>
-          <span className="text-slate-500">{unit}</span>
-        </div>
-      </div>
-      {has ? (
-        <ResponsiveContainer width="100%" height={170} minWidth={0} minHeight={170} initialDimension={{ width: 320, height: 170 }}>
-          <LineChart data={data} margin={{ top: 6, right: 12, left: 6, bottom: 24 }}>
-            <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
-            <ReferenceArea x1={dto.now} x2={axisMax} y1={-100000} y2={100000} fill="#38bdf8" fillOpacity={0.05} stroke="none" />
-            {variable === 'bz' && <ReferenceLine y={0} stroke="#475569" strokeDasharray="2 2" />}
-            <ReferenceLine x={dto.now} stroke="#cbd5e1" strokeOpacity={0.7} strokeDasharray="3 3" label={{ value: 'now', position: 'insideTopLeft', fill: '#cbd5e1', fontSize: 9 }} />
-            <XAxis dataKey="t" type="number" domain={[axisMin, axisMax]} allowDataOverflow scale="time" fontSize={9} stroke="#64748b" tickMargin={4} minTickGap={42} tickFormatter={(v: number) => fmtTick(v, span, timeZone)}
-              label={{ value: `time · ${tzLabel}`, position: 'insideBottom', offset: -6, fill: '#94a3b8', fontSize: 9 }} />
-            <YAxis fontSize={9} stroke="#64748b" domain={['auto', 'auto']} width={46} tickFormatter={(v: number) => (variable === 'speed' ? v.toFixed(0) : v.toFixed(1))}
-              label={{ value: unit, angle: -90, position: 'insideLeft', offset: 16, style: { textAnchor: 'middle', fontSize: 9, fill: '#94a3b8' } }} />
-            <Tooltip contentStyle={{ backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '6px', color: '#e2e8f0', fontSize: '11px' }} labelFormatter={v => `${fmtFull(Number(v), timeZone)} ${tzLabel}`} formatter={(v, n) => [`${Number(v).toFixed(1)} ${unit}`, String(n)]} />
-            <Line name="L1 detected" dataKey="detected" stroke={DETECTED_COLOR} strokeWidth={1.6} dot={false} connectNulls isAnimationActive={false} type="linear" />
-            <Line name="inbound forecast" dataKey="forecast" stroke={MRU_COLOR} strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls isAnimationActive={false} type="linear" />
-          </LineChart>
-        </ResponsiveContainer>
-      ) : <div className="flex h-[150px] items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">No live L1 samples</div>}
-    </div>
-  );
-}
-
 function NowcastPanel() {
   const { timeZone, label: tzLabel } = useContext(TimeZoneContext);
   const [dto, setDto] = useState<NowcastDto | null>(null);
@@ -2782,19 +2811,11 @@ function NowcastPanel() {
         </div>
       </div>
 
-      {dto ? (
-        <div className="grid gap-3 lg:grid-cols-2">
-          <NowcastChart title="Solar-wind speed" unit="km/s" variable="speed" dto={dto} />
-          <NowcastChart title="Bz (north-south)" unit="nT" variable="bz" dto={dto} />
-        </div>
-      ) : !loading ? (
-        <div className="flex h-32 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Nowcast feed unavailable</div>
-      ) : (
-        <div className="flex h-32 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Reading L1 feed…</div>
+      {!dto && !loading && (
+        <div className="flex h-12 items-center justify-center font-mono text-[10px] uppercase tracking-widest text-slate-600">Nowcast feed unavailable</div>
       )}
       <p className="mt-3 max-w-3xl text-[10px] leading-relaxed text-slate-500">
-        Latest L1 sample = the active RTSW L1 source upstream now; strongest inbound sample = the worst already-measured parcel still travelling to Earth.
-        Solid lines are upstream measurements; dashed lines are those same measurements shifted to their estimated Earth-arrival time (~{leadMin} min lead).
+        Latest L1 sample = the active RTSW L1 source upstream now; strongest inbound sample = the worst already-measured parcel still travelling to Earth (~{leadMin} min lead). The full speed and Bz traces live in Live Charts below.
       </p>
     </section>
   );
@@ -3064,13 +3085,13 @@ function SidebarNav({ view, onView }: { view: ConsoleView; onView: (v: ConsoleVi
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-1">
       {item('realtime', Gauge, 'Real-time forecast')}
-      {item('training', Layers, 'Training data')}
+      {item('training', Layers, 'Data Archive')}
       {item('validation', Timer, 'Validation & studies')}
     </div>
   );
 }
 
-function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail, onToggleSeries, sampleTimeUtc, lastSampleAgeMin, displayTimeZone, feedDegraded }: {
+function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail, onToggleSeries, sampleTimeUtc, lastSampleAgeMin, displayTimeZone, feedDegraded, liveSourceLabel, liveSourceConsidered }: {
   view: ConsoleView;
   onView: (v: ConsoleView) => void;
   scales: ScalesDto | null;
@@ -3082,12 +3103,18 @@ function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail,
   lastSampleAgeMin: number | null;
   displayTimeZone: string;
   feedDegraded: boolean;
+  liveSourceLabel: string | null;
+  liveSourceConsidered: LiveSourceDto['considered'];
 }) {
+  // Every source we looked at this poll — full redundancy picture on hover.
+  const sourcesTitle = liveSourceConsidered.length
+    ? liveSourceConsidered.map(s => `${s.label}: ${s.sampleCount} samples${s.latestSampleUtc ? ` · latest ${fmtClock(s.latestSampleUtc, displayTimeZone)}` : ''}${s.errorMessage ? ` · ${s.errorMessage}` : ''}`).join('\n')
+    : undefined;
   return (
     <aside className="flex w-full flex-col gap-3 self-start lg:sticky lg:top-0 lg:w-72 lg:shrink-0">
       <SidebarNav view={view} onView={onView} />
       {view === 'training' ? (
-        <SidebarGroup icon={Layers} title="Training data">
+        <SidebarGroup icon={Layers} title="Data Archive">
           <p className="text-[11px] leading-relaxed text-slate-400">All locally-downloaded historical data, classified by orbit (L1 / GEO / LEO / MEO) and mission, with the dates each package covers.</p>
         </SidebarGroup>
       ) : view === 'validation' ? (
@@ -3131,13 +3158,14 @@ function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail,
         </div>
       </SidebarGroup>
 
-      {/* Live feed status */}
+      {/* Live feed status — the source that won this poll (spacecraft-agnostic) */}
       <SidebarGroup icon={Wind} title="Live feed">
         <div className="flex flex-col gap-1.5 font-mono text-[10px]">
-          <span className="inline-flex items-center gap-1.5 text-slate-400">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            L1 ~1 min (DSCOVR) · auto 60s
+          <span className="inline-flex items-center gap-1.5 text-slate-300" title={sourcesTitle}>
+            <span className={`h-1.5 w-1.5 rounded-full ${feedDegraded ? 'bg-amber-400' : 'animate-pulse bg-emerald-400'}`} />
+            {liveSourceLabel ?? 'L1 source —'}
           </span>
+          <span className="text-slate-600">auto 60s · {liveSourceConsidered.length} source{liveSourceConsidered.length === 1 ? '' : 's'} polled</span>
           {lastSampleAgeMin !== null && (
             <span className="text-slate-500">
               latest {sampleTimeUtc ? fmtClock(sampleTimeUtc, displayTimeZone) : '--:--'}
@@ -3224,7 +3252,11 @@ export function ConsoleScreen() {
   const hitRate = summary && summary.verified > 0 ? Math.round((summary.hits / summary.verified) * 100) : null;
   const lastSampleMs = data?.current?.sampleTimeUtc ? new Date(data.current.sampleTimeUtc).getTime() : null;
   const lastSampleAgeMin = lastSampleMs !== null && nowMs > 0 ? Math.max(0, Math.round((nowMs - lastSampleMs) / 60000)) : null;
-  const feedStale = lastSampleAgeMin !== null && lastSampleAgeMin > STALE_FEED_THRESHOLD_MIN;
+  const feedFreshness = classifyFeedAge(lastSampleAgeMin);
+  const feedBehind = feedFreshness !== 'fresh';
+  // The independent pipeline the server selected for this poll (SWPC active
+  // spacecraft or NASA IMAP I-ALiRT). Shown always, so it's clear what is live.
+  const liveSourceLabel = data?.liveSource?.label ?? null;
   // Which series actually exist in the loaded window — the sidebar dims the rest.
   const seriesAvail: Record<SeriesKey, boolean> = {
     l1: (series?.l1.length ?? 0) > 0,
@@ -3245,7 +3277,7 @@ export function ConsoleScreen() {
           </Link>
           <div>
             <h1 className="text-lg font-semibold text-slate-100">Internal Console</h1>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">L1 → Earth · MRU benchmark · live danger</p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">L1 → Earth · MRU + ML · live danger</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -3273,6 +3305,8 @@ export function ConsoleScreen() {
             lastSampleAgeMin={lastSampleAgeMin}
             displayTimeZone={displayTimeZone}
             feedDegraded={data?.feedDegraded ?? false}
+            liveSourceLabel={liveSourceLabel}
+            liveSourceConsidered={data?.liveSource?.considered ?? []}
           />
 
           {/* Main body */}
@@ -3281,16 +3315,18 @@ export function ConsoleScreen() {
             /* Validation studies: benchmark-vs-ML headline, regime table, then context panels */
             <ValidationStudiesView />
             ) : (<>
-            {feedStale && lastSampleAgeMin !== null && (
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-amber-400/30 bg-amber-400/[0.07] px-4 py-2.5 text-xs text-amber-200">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
-                <span className="font-semibold uppercase tracking-widest">L1 feed behind by {fmtFeedAge(lastSampleAgeMin)}</span>
-                <span className="text-amber-200/75">
-                  NOAA real-time solar wind has not published newer data. Newest sample {data?.current?.sampleTimeUtc ? fmtClock(data.current.sampleTimeUtc, displayTimeZone) : '--:--'} {displayLabel}; the headline forecast and the live transit corridor reflect that sample, not the current minute.
+            {feedBehind && lastSampleAgeMin !== null && (
+              <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border px-4 py-2.5 text-xs ${feedFreshness === 'stale' ? 'border-orange-400/40 bg-orange-400/[0.08] text-orange-200' : 'border-amber-400/30 bg-amber-400/[0.07] text-amber-200'}`}>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${feedFreshness === 'stale' ? 'bg-orange-400' : 'bg-amber-400'}`} />
+                <span className="font-semibold uppercase tracking-widest">
+                  {feedFreshness === 'stale' ? 'L1 feed stale' : 'L1 feed delayed'}{liveSourceLabel ? ` · source: ${liveSourceLabel}` : ''} · last sample {data?.current?.sampleTimeUtc ? fmtClock(data.current.sampleTimeUtc, displayTimeZone) : '--:--'} {displayLabel} ({fmtFeedAge(lastSampleAgeMin)} ago)
+                </span>
+                <span className={feedFreshness === 'stale' ? 'text-orange-200/75' : 'text-amber-200/75'}>
+                  No fresher sample from any source (SWPC active spacecraft or NASA IMAP I-ALiRT); the headline forecast and the live transit corridor reflect that sample, not the current minute.
                 </span>
               </div>
             )}
-            {data?.current ? <DangerHero current={data.current} /> : (
+            {data?.current ? <DangerHero current={data.current} muted={feedBehind} /> : (
               <div className="flex h-40 items-center justify-center rounded-xl border border-amber-400/25 bg-amber-400/[0.06] font-mono text-xs uppercase tracking-widest text-amber-200/80">
                 No live L1 solar-wind sample available
               </div>

@@ -17,6 +17,27 @@
 /** Nominal Sun-Earth L1 distance, used when a measured spacecraft distance is unavailable. */
 export const NOMINAL_L1_DISTANCE_KM = 1_500_000;
 
+// ---- Raw MRU baseline: ONE consistent computation everywhere ----
+// The validated benchmark (and the basis the ML residual was trained against) propagates
+// the spacecraft X-position to the bow-shock NOSE, not Earth's centre:
+//     mru_delay = (sc_x - bsn_x) * Re / V
+// These constants match ml/arrival_residual/dataset.py (Re) and the live BSN estimate.
+export const RE_KM = 6371.2;
+export const BSN_X_RE = 13.5;
+/** Nominal L1 → bow-shock-nose distance (the Earth-centre nominal minus the standoff). */
+export const NOMINAL_BOW_SHOCK_DISTANCE_KM = NOMINAL_L1_DISTANCE_KM - BSN_X_RE * RE_KM;
+
+/**
+ * The MRU propagation distance: spacecraft X to the bow-shock nose, (sc_x - bsn_x)·Re.
+ * Pass the spacecraft GSE X in km. Falls back to the nominal L1→bow-shock distance when
+ * the position is unavailable — NEVER the Earth-centre magnitude, so the raw MRU baseline
+ * never silently jumps ~3 min between formulas across states.
+ */
+export function bowShockDistanceKm(scXKm: number | null | undefined): number {
+  if (scXKm === null || scXKm === undefined || !Number.isFinite(scXKm)) return NOMINAL_BOW_SHOCK_DISTANCE_KM;
+  return scXKm - BSN_X_RE * RE_KM;
+}
+
 /** A single solar-wind sample as measured at L1. */
 export interface L1Sample {
   timeUtc: string;
