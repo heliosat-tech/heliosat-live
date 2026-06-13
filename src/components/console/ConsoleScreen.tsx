@@ -338,6 +338,20 @@ const CORRIDOR_WINDOWS: Array<{ key: string; label: string }> = [
 ];
 const NO_DATA_FILL = '#334155';
 
+// NOAA RTSW nominally publishes ~1 sample/min. Past this, the newest L1 sample is treated
+// as stale: the live transit corridor only shows parcels still in flight, so when the feed
+// lags the newest parcel has already "arrived" and the live view empties out. We surface
+// the lag explicitly instead of rendering a bare "no data" state.
+const STALE_FEED_THRESHOLD_MIN = 20;
+
+/** Compact age, e.g. "12 min" or "5 h 11 min". */
+function fmtFeedAge(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
 const fmtDay = (ms: number, timeZone: string) =>
   new Date(ms).toLocaleDateString('en-US', { month: 'short', day: '2-digit', timeZone });
 
@@ -764,6 +778,12 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
   const hasData = isReplay ? windowPeak.hasData : liveCorridor.hasData;
   const peakStyle = dangerStyle(isReplay ? windowPeak.level : liveCorridor.peak.level);
 
+  // Live-feed staleness: when the newest L1 sample is older than the threshold, nothing is
+  // still in transit (it already "arrived"), so the live corridor empties. Detect it here
+  // so the empty state can say "feed behind" rather than the cryptic "no forecast data".
+  const feedAgeMin = Number.isFinite(sampleMs) && nowMs > 0 ? Math.max(0, Math.round((nowMs - sampleMs) / 60000)) : null;
+  const feedStale = !isReplay && feedAgeMin !== null && feedAgeMin > STALE_FEED_THRESHOLD_MIN;
+
   const tile = (label: string, value: ReactNode, accent = false) => (
     <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2">
       <div className="font-mono text-[8px] uppercase tracking-widest text-slate-500">{label}</div>
@@ -827,6 +847,12 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
         <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-400/30 bg-emerald-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-emerald-200">
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: dangerStyle(0).dot }} />
           {isReplay ? `Quiet — no storms reached G1 in the last ${windowKey}` : 'Quiet — only G0 wind in transit'}
+        </div>
+      ) : feedStale && feedAgeMin !== null ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-400/30 bg-amber-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-amber-200">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          L1 feed behind by {fmtFeedAge(feedAgeMin)}
+          <span className="text-amber-200/70">· newest sample {current.sampleTimeUtc ? fmtClock(current.sampleTimeUtc, timeZone) : '--:--'} {tzLabel} · nothing currently in transit</span>
         </div>
       ) : (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">
@@ -3198,6 +3224,7 @@ export function ConsoleScreen() {
   const hitRate = summary && summary.verified > 0 ? Math.round((summary.hits / summary.verified) * 100) : null;
   const lastSampleMs = data?.current?.sampleTimeUtc ? new Date(data.current.sampleTimeUtc).getTime() : null;
   const lastSampleAgeMin = lastSampleMs !== null && nowMs > 0 ? Math.max(0, Math.round((nowMs - lastSampleMs) / 60000)) : null;
+  const feedStale = lastSampleAgeMin !== null && lastSampleAgeMin > STALE_FEED_THRESHOLD_MIN;
   // Which series actually exist in the loaded window — the sidebar dims the rest.
   const seriesAvail: Record<SeriesKey, boolean> = {
     l1: (series?.l1.length ?? 0) > 0,
@@ -3254,6 +3281,15 @@ export function ConsoleScreen() {
             /* Validation studies: benchmark-vs-ML headline, regime table, then context panels */
             <ValidationStudiesView />
             ) : (<>
+            {feedStale && lastSampleAgeMin !== null && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-amber-400/30 bg-amber-400/[0.07] px-4 py-2.5 text-xs text-amber-200">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
+                <span className="font-semibold uppercase tracking-widest">L1 feed behind by {fmtFeedAge(lastSampleAgeMin)}</span>
+                <span className="text-amber-200/75">
+                  NOAA real-time solar wind has not published newer data. Newest sample {data?.current?.sampleTimeUtc ? fmtClock(data.current.sampleTimeUtc, displayTimeZone) : '--:--'} {displayLabel}; the headline forecast and the live transit corridor reflect that sample, not the current minute.
+                </span>
+              </div>
+            )}
             {data?.current ? <DangerHero current={data.current} /> : (
               <div className="flex h-40 items-center justify-center rounded-xl border border-amber-400/25 bg-amber-400/[0.06] font-mono text-xs uppercase tracking-widest text-amber-200/80">
                 No live L1 solar-wind sample available
