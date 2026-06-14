@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect } from 'react';
+import * as THREE from 'three';
 import { TriangleAlert } from 'lucide-react';
 import { feature } from 'topojson-client';
 import type { GlobeMethods, GlobeProps } from 'react-globe.gl';
@@ -10,6 +11,69 @@ import { useSatelliteSelection } from '@/contexts/SatelliteSelectionContext';
 
 const EARTH_RADIUS_KM = 6371;
 const MIN_CANVAS_SIZE = 1;
+
+// Day/night illumination: a custom globe material that blends a daytime texture on the
+// Sun-facing hemisphere with the night-lights texture on the dark side, smoothly across
+// the terminator. The lit hemisphere tracks the real subsolar point (updated each minute);
+// `globeRotation` corrects for the camera's current point-of-view so the terminator stays
+// fixed to the actual geography. Recipe follows the react-globe.gl earth-day-night example.
+const DAY_TEXTURE_URL = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+const NIGHT_TEXTURE_URL = 'https://unpkg.com/three-globe/example/img/earth-night.jpg';
+
+const DAY_NIGHT_VERTEX_SHADER = `
+  varying vec3 vNormal;
+  varying vec2 vUv;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const DAY_NIGHT_FRAGMENT_SHADER = `
+  #define PI 3.141592653589793
+  uniform sampler2D dayTexture;
+  uniform sampler2D nightTexture;
+  uniform vec2 sunPosition;
+  uniform vec2 globeRotation;
+  varying vec3 vNormal;
+  varying vec2 vUv;
+
+  float toRad(in float a) { return a * PI / 180.0; }
+
+  vec3 Polar2Cartesian(in vec2 c) { // [lng, lat]
+    float theta = toRad(90.0 - c.x);
+    float phi = toRad(90.0 - c.y);
+    return vec3(sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta));
+  }
+
+  void main() {
+    float invLon = toRad(globeRotation.x);
+    float invLat = -toRad(globeRotation.y);
+    mat3 rotX = mat3(1, 0, 0, 0, cos(invLat), -sin(invLat), 0, sin(invLat), cos(invLat));
+    mat3 rotY = mat3(cos(invLon), 0, sin(invLon), 0, 1, 0, -sin(invLon), 0, cos(invLon));
+    vec3 rotatedSunDirection = rotX * rotY * Polar2Cartesian(sunPosition);
+    float intensity = dot(normalize(vNormal), normalize(rotatedSunDirection));
+    vec4 dayColor = texture2D(dayTexture, vUv);
+    vec4 nightColor = texture2D(nightTexture, vUv);
+    float blendFactor = smoothstep(-0.12, 0.12, intensity);
+    gl_FragColor = mix(nightColor, dayColor, blendFactor);
+  }
+`;
+
+/** Subsolar point [lng, lat] in degrees: where the Sun is directly overhead right now. */
+function subsolarPoint(date: Date): [number, number] {
+  const dayMs = 86_400_000;
+  const yearStart = Date.UTC(date.getUTCFullYear(), 0, 0);
+  const dayOfYear = (date.getTime() - yearStart) / dayMs; // fractional, 1..366
+  const declination = -23.44 * Math.cos((2 * Math.PI / 365) * (dayOfYear + 10)); // latitude
+  const b = (2 * Math.PI / 364) * (dayOfYear - 81);
+  const equationOfTimeMin = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b);
+  const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  let longitude = -15 * (utcHours - 12 + equationOfTimeMin / 60);
+  longitude = ((longitude + 180) % 360 + 360) % 360 - 180; // normalize to [-180, 180]
+  return [longitude, declination];
+}
 
 const canCreateWebGLContext = () => {
   if (typeof document === 'undefined') return false;
@@ -86,6 +150,23 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
   const [worldPolygons, setWorldPolygons] = useState<object[]>([]);
   const [worldError, setWorldError] = useState<string | null>(null);
   const [dims, setDims] = useState({ w: 900, h: 620 });
+  // Day/night material is created once, on the client only (TextureLoader needs the browser).
+  const [globeMaterial] = useState<THREE.ShaderMaterial | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = 'anonymous';
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        dayTexture: { value: loader.load(DAY_TEXTURE_URL) },
+        nightTexture: { value: loader.load(NIGHT_TEXTURE_URL) },
+        sunPosition: { value: new THREE.Vector2() },
+        globeRotation: { value: new THREE.Vector2(60, 12) }, // matches the initial point-of-view
+      },
+      vertexShader: DAY_NIGHT_VERTEX_SHADER,
+      fragmentShader: DAY_NIGHT_FRAGMENT_SHADER,
+    });
+  });
+  const materialRef = useRef<THREE.ShaderMaterial | null>(globeMaterial);
   const { selectedTle, setSelectedTle } = useSatelliteSelection();
 
   // Dynamic import — globe.gl requires browser APIs
@@ -130,6 +211,21 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
       .catch(() => setWorldError('Country borders unavailable'));
   }, []);
 
+  // Keep the lit hemisphere on the real subsolar point, refreshed each minute.
+  useEffect(() => {
+    if (!globeMaterial) return;
+    const applySun = () => {
+      const [lng, lat] = subsolarPoint(new Date());
+      globeMaterial.uniforms.sunPosition.value.set(lng, lat);
+    };
+    applySun();
+    const intervalId = window.setInterval(applySun, 60_000);
+    return () => {
+      window.clearInterval(intervalId);
+      globeMaterial.dispose();
+    };
+  }, [globeMaterial]);
+
   const updateDimensions = useCallback(() => {
     const el = containerRef.current;
     if (!el) return null;
@@ -166,7 +262,10 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
       cancelAnimationFrame(animationFrame);
       ro.disconnect();
     };
-  }, [updateDimensions]);
+    // GlobeComponent is in the deps so this re-runs once the globe finishes its dynamic
+    // import and the container mounts — otherwise the observer never attaches and the
+    // canvas keeps the initial 900px width (rendering the globe pinned to the left).
+  }, [updateDimensions, GlobeComponent]);
 
   const cameraAltitude = useMemo(() => {
     const aspect = dims.w / Math.max(dims.h, MIN_CANVAS_SIZE);
@@ -256,14 +355,20 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
         height={dims.h}
         globeOffset={[0, 0]}
         backgroundColor="rgba(2,6,23,1)"
-        globeImageUrl="https://unpkg.com/three-globe/example/img/earth-night.jpg"
+        globeMaterial={globeMaterial ?? undefined}
+        onZoom={(pov: { lat: number; lng: number; altitude: number }) => {
+          const material = materialRef.current;
+          if (material && pov) material.uniforms.globeRotation.value.set(pov.lng, pov.lat);
+        }}
         atmosphereColor="#1e4080"
         atmosphereAltitude={0.18}
         polygonsData={worldPolygons}
-        polygonCapColor={() => 'rgba(15,30,60,0.6)'}
-        polygonSideColor={() => 'rgba(20,40,80,0.4)'}
-        polygonStrokeColor={() => '#1e4080'}
-        polygonAltitude={0}
+        // Transparent cap/side + a small lift keep country borders as thin outlines floating
+        // just above the surface — no fill over the day/night texture, and no z-fighting flicker.
+        polygonCapColor={() => 'rgba(0,0,0,0)'}
+        polygonSideColor={() => 'rgba(0,0,0,0)'}
+        polygonStrokeColor={() => 'rgba(140,180,255,0.45)'}
+        polygonAltitude={0.006}
         onGlobeReady={() => frameGlobe(0)}
         pointsData={satellitePoints}
         pointLat="lat"
