@@ -117,55 +117,57 @@ export default async function Home() {
                     </div>
                   </>
                 )}
-                right={(
-                  <>
-                    {/* PRONÓSTICO · IMPACTO — asesoría del satélite + watch-list con umbrales */}
-                    <ExpandableMissionWidget
-                      title="Satellite Operator Report"
-                      detail={(
-                        <div className="h-full min-h-[620px]">
-                          <SatelliteOperatorReport
-                            noaaMagData={noaaMagData}
-                            noaaPlasmaData={noaaPlasmaData}
-                            noaaEphemerisData={noaaEphemerisData}
-                            kp={l1ForecastData.latest.kp}
-                          />
-                        </div>
-                      )}
-                    >
-                      <div className="min-h-[430px] xl:h-[44vh] xl:min-h-0">
+                rightTop={(
+                  /* PRONÓSTICO · IMPACTO — asesoría del satélite (mitad de arriba, redimensionable) */
+                  <ExpandableMissionWidget
+                    title="Satellite Operator Report"
+                    className="xl:h-full"
+                    detail={(
+                      <div className="h-full min-h-[620px]">
                         <SatelliteOperatorReport
-                          compact
                           noaaMagData={noaaMagData}
                           noaaPlasmaData={noaaPlasmaData}
                           noaaEphemerisData={noaaEphemerisData}
                           kp={l1ForecastData.latest.kp}
                         />
                       </div>
-                    </ExpandableMissionWidget>
-
-                    <ExpandableMissionWidget
-                      title="Selected Satellite"
-                      detail={(
-                        <div className="h-full min-h-[620px]">
-                          <SatelliteWatchlistPanel
-                            noaaMagData={noaaMagData}
-                            noaaPlasmaData={noaaPlasmaData}
-                            kp={l1ForecastData.latest.kp}
-                          />
-                        </div>
-                      )}
-                    >
-                      <div className="min-h-[240px] xl:h-[30vh] xl:min-h-0">
+                    )}
+                  >
+                    <div className="min-h-[430px] xl:h-full xl:min-h-0">
+                      <SatelliteOperatorReport
+                        compact
+                        noaaMagData={noaaMagData}
+                        noaaPlasmaData={noaaPlasmaData}
+                        noaaEphemerisData={noaaEphemerisData}
+                        kp={l1ForecastData.latest.kp}
+                      />
+                    </div>
+                  </ExpandableMissionWidget>
+                )}
+                rightBottom={(
+                  /* PRONÓSTICO · IMPACTO — watch-list con umbrales (mitad de abajo, redimensionable) */
+                  <ExpandableMissionWidget
+                    title="Selected Satellite"
+                    className="xl:h-full"
+                    detail={(
+                      <div className="h-full min-h-[620px]">
                         <SatelliteWatchlistPanel
-                          compact
                           noaaMagData={noaaMagData}
                           noaaPlasmaData={noaaPlasmaData}
                           kp={l1ForecastData.latest.kp}
                         />
                       </div>
-                    </ExpandableMissionWidget>
-                  </>
+                    )}
+                  >
+                    <div className="min-h-[240px] xl:h-full xl:min-h-0">
+                      <SatelliteWatchlistPanel
+                        compact
+                        noaaMagData={noaaMagData}
+                        noaaPlasmaData={noaaPlasmaData}
+                        kp={l1ForecastData.latest.kp}
+                      />
+                    </div>
+                  </ExpandableMissionWidget>
                 )}
                 diagnostics={(
                   <>

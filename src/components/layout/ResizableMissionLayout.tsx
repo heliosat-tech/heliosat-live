@@ -15,29 +15,34 @@ import { GripHorizontal, GripVertical, Maximize2, X } from 'lucide-react';
 interface ResizableMissionLayoutProps {
   left: ReactNode;
   center: ReactNode;
-  right: ReactNode;
+  rightTop: ReactNode;
+  rightBottom: ReactNode;
   diagnostics: ReactNode;
 }
 
 interface MissionLayoutSizing {
   leftWidth: number;
   rightWidth: number;
+  /** Share of the right column's height given to its top widget, as a percentage. */
+  rightTopRatio: number;
   diagnosticsHeightVh: number;
 }
 
-type ResizeTarget = 'left' | 'right' | 'diagnostics';
+type ResizeTarget = 'left' | 'right' | 'rightSplit' | 'diagnostics';
 
 const STORAGE_KEY = 'heliosat.missionLayoutSizing.v1';
 
 const DEFAULT_SIZING: MissionLayoutSizing = {
   leftWidth: 360,
   rightWidth: 370,
+  rightTopRatio: 58,
   diagnosticsHeightVh: 42,
 };
 
 const LIMITS = {
   leftWidth: { min: 320, max: 430 },
   rightWidth: { min: 320, max: 450 },
+  rightTopRatio: { min: 28, max: 78 },
   diagnosticsHeightVh: { min: 30, max: 56 },
 } as const;
 
@@ -46,6 +51,11 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
 const sanitizeSizing = (value: Partial<MissionLayoutSizing>): MissionLayoutSizing => ({
   leftWidth: clamp(Number(value.leftWidth) || DEFAULT_SIZING.leftWidth, LIMITS.leftWidth.min, LIMITS.leftWidth.max),
   rightWidth: clamp(Number(value.rightWidth) || DEFAULT_SIZING.rightWidth, LIMITS.rightWidth.min, LIMITS.rightWidth.max),
+  rightTopRatio: clamp(
+    Number(value.rightTopRatio) || DEFAULT_SIZING.rightTopRatio,
+    LIMITS.rightTopRatio.min,
+    LIMITS.rightTopRatio.max,
+  ),
   diagnosticsHeightVh: clamp(
     Number(value.diagnosticsHeightVh) || DEFAULT_SIZING.diagnosticsHeightVh,
     LIMITS.diagnosticsHeightVh.min,
@@ -78,12 +88,15 @@ const writeStoredSizing = (sizing: MissionLayoutSizing) => {
 export const ResizableMissionLayout: React.FC<ResizableMissionLayoutProps> = ({
   left,
   center,
-  right,
+  rightTop,
+  rightBottom,
   diagnostics,
 }) => {
   const [sizing, setSizing] = useState<MissionLayoutSizing>(DEFAULT_SIZING);
   const [hasLoadedStoredSizing, setHasLoadedStoredSizing] = useState(false);
   const [activeResizeTarget, setActiveResizeTarget] = useState<ResizeTarget | null>(null);
+  const rightTopRef = useRef<HTMLDivElement>(null);
+  const rightBottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const animationFrame = window.requestAnimationFrame(() => {
@@ -110,6 +123,13 @@ export const ResizableMissionLayout: React.FC<ResizableMissionLayoutProps> = ({
   const layoutStyle = useMemo(() => ({
     '--mission-grid-columns': `${sizing.leftWidth}px minmax(0, 1fr) ${sizing.rightWidth}px`,
   }) as CSSProperties, [sizing.leftWidth, sizing.rightWidth]);
+
+  const rightColumnStyle = useMemo(() => ({
+    // The two right-column widgets fill the available height in this ratio (top : bottom),
+    // so the boundary between them is what the split handle drags.
+    '--right-top-grow': `${sizing.rightTopRatio}`,
+    '--right-bottom-grow': `${100 - sizing.rightTopRatio}`,
+  }) as CSSProperties, [sizing.rightTopRatio]);
 
   const diagnosticsStyle = useMemo(() => ({
     maxHeight: `${sizing.diagnosticsHeightVh}vh`,
@@ -191,6 +211,57 @@ export const ResizableMissionLayout: React.FC<ResizableMissionLayoutProps> = ({
     window.addEventListener('pointerup', stopResize);
     window.addEventListener('pointercancel', stopResize);
   }, [sizing.diagnosticsHeightVh]);
+
+  const beginRightSplitResize = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+
+    // Drag is measured against the live span of the two stacked widgets, so the boundary
+    // tracks the pointer regardless of the column header above them.
+    const topRect = rightTopRef.current?.getBoundingClientRect();
+    const bottomRect = rightBottomRef.current?.getBoundingClientRect();
+
+    if (!topRect || !bottomRect) {
+      return;
+    }
+
+    const regionTop = topRect.top;
+    const regionHeight = Math.max(bottomRect.bottom - topRect.top, 1);
+    const originalCursor = document.body.style.cursor;
+    const originalUserSelect = document.body.style.userSelect;
+
+    setActiveResizeTarget('rightSplit');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const ratio = ((moveEvent.clientY - regionTop) / regionHeight) * 100;
+
+      setSizing(current => ({
+        ...current,
+        rightTopRatio: clamp(Math.round(ratio), LIMITS.rightTopRatio.min, LIMITS.rightTopRatio.max),
+      }));
+    };
+
+    const stopResize = () => {
+      setActiveResizeTarget(null);
+      document.body.style.cursor = originalCursor;
+      document.body.style.userSelect = originalUserSelect;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+  }, []);
+
+  const nudgeRightSplit = useCallback((amount: number) => {
+    setSizing(current => ({
+      ...current,
+      rightTopRatio: clamp(current.rightTopRatio + amount, LIMITS.rightTopRatio.min, LIMITS.rightTopRatio.max),
+    }));
+  }, []);
 
   const nudgeColumn = useCallback((target: 'left' | 'right', amount: number) => {
     const limits = target === 'left' ? LIMITS.leftWidth : LIMITS.rightWidth;
@@ -281,9 +352,40 @@ export const ResizableMissionLayout: React.FC<ResizableMissionLayoutProps> = ({
               }
             }}
           />
-          <div className="flex min-h-0 flex-col gap-2 lg:grid lg:grid-cols-2 lg:gap-3 xl:flex xl:h-full xl:flex-col xl:overflow-y-auto xl:pr-1">
+          <div
+            className="flex min-h-0 flex-col gap-2 lg:grid lg:grid-cols-2 lg:gap-3 xl:flex xl:h-full xl:flex-col xl:overflow-hidden xl:pr-1"
+            style={rightColumnStyle}
+          >
             <div className="hidden shrink-0 px-1 font-mono text-[9px] uppercase tracking-[0.25em] text-cyan-300/60 lg:col-span-2 xl:block">Pronóstico · Impacto</div>
-            {right}
+
+            <div ref={rightTopRef} className="min-h-0 xl:[flex-basis:0px] xl:[flex-grow:var(--right-top-grow)]">
+              {rightTop}
+            </div>
+
+            <RightSplitHandle
+              active={activeResizeTarget === 'rightSplit'}
+              onPointerDown={beginRightSplitResize}
+              onDoubleClick={() => setSizing(current => ({ ...current, rightTopRatio: DEFAULT_SIZING.rightTopRatio }))}
+              onKeyDown={event => {
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  nudgeRightSplit(event.shiftKey ? -6 : -3);
+                } else if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  nudgeRightSplit(event.shiftKey ? 6 : 3);
+                } else if (event.key === 'Home') {
+                  event.preventDefault();
+                  setSizing(current => ({ ...current, rightTopRatio: LIMITS.rightTopRatio.min }));
+                } else if (event.key === 'End') {
+                  event.preventDefault();
+                  setSizing(current => ({ ...current, rightTopRatio: LIMITS.rightTopRatio.max }));
+                }
+              }}
+            />
+
+            <div ref={rightBottomRef} className="min-h-0 xl:[flex-basis:0px] xl:[flex-grow:var(--right-bottom-grow)]">
+              {rightBottom}
+            </div>
           </div>
         </aside>
       </div>
@@ -464,6 +566,35 @@ function ColumnResizeHandle({
     >
       <span className={`h-full w-px rounded-full transition ${active ? 'bg-cyan-300/80' : 'bg-slate-700/70'}`} />
       <GripVertical className="absolute h-4 w-4 rounded bg-slate-950/95" aria-hidden="true" />
+    </button>
+  );
+}
+
+function RightSplitHandle({
+  active,
+  onPointerDown,
+  onDoubleClick,
+  onKeyDown,
+}: {
+  active: boolean;
+  onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  onDoubleClick: () => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label="Ajustar reparto entre Satellite Operator Report y Selected Satellite"
+      title="Arrastra para dar más espacio a un panel u otro. Doble clic para restablecer."
+      onPointerDown={onPointerDown}
+      onDoubleClick={onDoubleClick}
+      onKeyDown={onKeyDown}
+      className={`relative z-30 hidden h-3 w-full shrink-0 touch-none cursor-row-resize items-center justify-center rounded outline-none transition xl:flex ${
+        active ? 'text-cyan-100' : 'text-slate-600 hover:text-cyan-200 focus-visible:text-cyan-100'
+      }`}
+    >
+      <span className={`h-px w-full rounded-full transition ${active ? 'bg-cyan-300/80' : 'bg-slate-700/70'}`} />
+      <GripHorizontal className="absolute h-4 w-7 rounded bg-slate-950/95" aria-hidden="true" />
     </button>
   );
 }
