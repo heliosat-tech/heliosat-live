@@ -4,7 +4,7 @@ import { Globe2, Orbit, Settings2, Sun, TriangleAlert } from 'lucide-react';
 import { GlobeView } from './GlobeView';
 import { SunEarthView } from './SunEarthView';
 import { SatelliteConfigModal } from './SatelliteConfigModal';
-import { propagateSatelliteFromTle } from '@/services/satellitePropagationService';
+import { propagateSatelliteFromTle, orbitalPeriodMinutes } from '@/services/satellitePropagationService';
 import type { NoaaServiceResponse, NoaaEphemerisData, NoaaMagnetometerData, NoaaPlasmaData } from '@/services/noaaSolarWindService';
 import { useSatelliteSelection } from '@/contexts/SatelliteSelectionContext';
 import { getSatelliteKey, useSatelliteConfig } from '@/contexts/SatelliteConfigContext';
@@ -12,9 +12,14 @@ import { getSatelliteKey, useSatelliteConfig } from '@/contexts/SatelliteConfigC
 type ViewMode = 'earth' | 'sunearth';
 
 const EARTH_RADIUS_KM = 6371;
-const PROPAGATION_INTERVAL_MS = 30_000;
-const ORBIT_STEPS = 90;
-const ORBIT_STEP_MS = 90_000;
+// Positions refresh at ~1 Hz; the globe tweens between updates (pointsTransitionDuration)
+// so satellites glide along their orbits in real time without re-rendering React at 60 fps.
+const PROPAGATION_INTERVAL_MS = 1_000;
+const ORBIT_SAMPLES = 128;
+// Orbit loops are the full closed path (start-time-independent) and barely change over
+// minutes, so they're recomputed at most this often — NOT on every position tick — which
+// keeps them stable instead of redrawing from scratch each update.
+const ORBIT_REFRESH_MS = 5 * 60 * 1_000;
 
 interface Props {
   noaaMagData: NoaaServiceResponse<NoaaMagnetometerData>;
@@ -110,17 +115,29 @@ export const VisualizationSwitcher: React.FC<Props> = ({ noaaMagData, noaaPlasma
     return trackedTles.map(tle => propagateSatelliteFromTle(tle, now));
   }, [trackedTles, propagationTime]);
 
-  const orbitPathPoints = useMemo(() => {
-    if (!orbitPropagationEnabled || !selectedTrackedTle) return [];
-    const pts: [number, number, number][] = [];
-    for (let i = 0; i <= ORBIT_STEPS; i++) {
-      const d = propagateSatelliteFromTle(selectedTrackedTle, new Date(propagationTime + i * ORBIT_STEP_MS));
-      if (d.positionAvailable && d.latitude != null && d.longitude != null && d.altitudeKm != null) {
-        pts.push([d.latitude, d.longitude, Math.max(0.02, d.altitudeKm / EARTH_RADIUS_KM)]);
-      }
-    }
-    return pts.length > 1 ? pts : [];
-  }, [orbitPropagationEnabled, selectedTrackedTle, propagationTime]);
+  // One full-period orbit loop per tracked satellite (not just the selected one). Sampling
+  // a complete orbital period — derived from each TLE's mean motion — makes LEO/MEO/GEO/HEO
+  // all draw as closed loops instead of partial far-out arcs. Computed from "now" on track
+  // changes (the loop shape is period-independent of the start), not every propagation tick.
+  const orbitRefreshTick = Math.floor(propagationTime / ORBIT_REFRESH_MS);
+  const orbitPaths = useMemo(() => {
+    if (!orbitPropagationEnabled || orbitRefreshTick === 0) return [];
+    const startMs = orbitRefreshTick * ORBIT_REFRESH_MS;
+    const selectedKey = selectedTrackedTle ? getSatelliteKey(selectedTrackedTle) : null;
+    return trackedTles
+      .map(tle => {
+        const periodMs = (orbitalPeriodMinutes(tle) ?? 95) * 60_000;
+        const coords: [number, number, number][] = [];
+        for (let i = 0; i <= ORBIT_SAMPLES; i++) {
+          const d = propagateSatelliteFromTle(tle, new Date(startMs + (i / ORBIT_SAMPLES) * periodMs));
+          if (d.positionAvailable && d.latitude != null && d.longitude != null && d.altitudeKm != null) {
+            coords.push([d.latitude, d.longitude, Math.max(0.02, d.altitudeKm / EARTH_RADIUS_KM)]);
+          }
+        }
+        return { coords, isSelected: getSatelliteKey(tle) === selectedKey };
+      })
+      .filter(path => path.coords.length > 1);
+  }, [orbitPropagationEnabled, trackedTles, selectedTrackedTle, orbitRefreshTick]);
 
   return (
     <>
@@ -201,7 +218,7 @@ export const VisualizationSwitcher: React.FC<Props> = ({ noaaMagData, noaaPlasma
               <GlobeView
                 tles={trackedTles}
                 propagatedSatellites={propagated}
-                orbitPathPoints={orbitPathPoints}
+                orbitPaths={orbitPaths}
                 showCount={mapStatus}
               />
             </GlobeRenderBoundary>

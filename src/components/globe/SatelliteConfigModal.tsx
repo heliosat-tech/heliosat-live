@@ -134,7 +134,7 @@ export const SatelliteConfigModal: React.FC = () => {
                   Satellite Tracker
                 </h2>
                 <p className="truncate text-[10px] font-mono text-slate-500">
-                  Track map objects, switch active satellite, and inspect current location
+                  Track satellites onto the map, then select one to inspect it
                 </p>
               </div>
             </div>
@@ -256,7 +256,7 @@ export const SatelliteConfigModal: React.FC = () => {
                               </span>
                               {isActive && (
                                 <span className="flex-shrink-0 rounded bg-cyan-500/10 px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-widest text-cyan-300">
-                                  Active
+                                  Selected
                                 </span>
                               )}
                             </span>
@@ -276,7 +276,7 @@ export const SatelliteConfigModal: React.FC = () => {
                               }`}
                             >
                               {isTracked ? <Check className="h-3 w-3" aria-hidden="true" /> : <Satellite className="h-3 w-3" aria-hidden="true" />}
-                              {isActive ? 'Active' : isTracked ? 'Select' : 'Track'}
+                              {isActive ? 'Selected' : isTracked ? 'Select' : 'Track'}
                             </button>
                             {isTracked && (
                               <button
@@ -301,9 +301,12 @@ export const SatelliteConfigModal: React.FC = () => {
               <div className="border-b border-slate-800 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-[9px] uppercase tracking-widest text-slate-500">Active satellite</div>
+                    <div className="text-[9px] uppercase tracking-widest text-slate-500">Selected satellite</div>
                     <div className="mt-1 max-w-56 truncate text-sm font-mono font-semibold text-slate-100">
                       {selectedTle?.name ?? 'None selected'}
+                    </div>
+                    <div className="mt-1 max-w-56 text-[8px] font-mono leading-snug text-slate-600">
+                      Drives the Selected Satellite &amp; Operator Report panels
                     </div>
                   </div>
                   {selectedTle && (
@@ -312,7 +315,7 @@ export const SatelliteConfigModal: React.FC = () => {
                       onClick={() => setSelectedTle(null)}
                       className="rounded border border-slate-700 px-2 py-1 text-[9px] font-mono text-slate-500 transition-colors hover:text-slate-200"
                     >
-                      Clear active
+                      Clear selection
                     </button>
                   )}
                 </div>
@@ -341,7 +344,7 @@ export const SatelliteConfigModal: React.FC = () => {
 
               <div className="flex h-10 flex-shrink-0 items-center justify-between border-b border-slate-800 px-4">
                 <div>
-                  <div className="text-[9px] uppercase tracking-widest text-slate-500">Satellites on map</div>
+                  <div className="text-[9px] uppercase tracking-widest text-slate-500">Tracked satellites</div>
                 </div>
                 {trackedTles.length > 0 && (
                   <button
@@ -384,7 +387,7 @@ export const SatelliteConfigModal: React.FC = () => {
                                 <span className="truncate text-[11px] font-mono font-medium text-slate-100">{tle.name}</span>
                                 {isActive && (
                                   <span className="flex-shrink-0 rounded bg-cyan-500/10 px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-widest text-cyan-300">
-                                    Active
+                                    Selected
                                   </span>
                                 )}
                               </div>
@@ -401,7 +404,7 @@ export const SatelliteConfigModal: React.FC = () => {
                                 }`}
                                 aria-label={`Select ${tle.name}`}
                               >
-                                {isActive ? 'Active' : 'Select'}
+                                {isActive ? 'Selected' : 'Select'}
                               </button>
                               <button
                                 type="button"

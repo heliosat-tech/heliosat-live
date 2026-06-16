@@ -1,30 +1,36 @@
 import { AppShell } from '@/components/layout/AppShell';
-import { TopStatusBar } from '@/components/layout/TopStatusBar';
-import { SolarWindPanel } from '@/components/panels/SolarWindPanel';
-import { SelectedSatellitePanel } from '@/components/panels/SelectedSatellitePanel';
+import { ExpandableMissionWidget, ResizableMissionLayout } from '@/components/layout/ResizableMissionLayout';
+import { TopStatusBar, type SourceStatus } from '@/components/layout/TopStatusBar';
+import { MissionHeadlineBar } from '@/components/panels/MissionHeadlineBar';
+import { L1PropagationPanel, ArrivalHeatmapPanel } from '@/components/panels/L1ForecastPanel';
+import { SatelliteWatchlistPanel } from '@/components/panels/SatelliteWatchlistPanel';
 import { AlertsPanel } from '@/components/panels/AlertsPanel';
 import { DataReadinessPanel } from '@/components/panels/DataReadinessPanel';
-import { ForecastModulePanel } from '@/components/panels/ForecastModulePanel';
-import { PhysicalFluxPanel } from '@/components/panels/PhysicalFluxPanel';
 import { SatelliteOperatorReport } from '@/components/panels/SatelliteOperatorReport';
 import { ModelThresholdsPanel } from '@/components/panels/ModelThresholdsPanel';
 import { VisualizationSwitcher } from '@/components/globe/VisualizationSwitcher';
 import { SatelliteSelectionProvider } from '@/contexts/SatelliteSelectionContext';
 import { SatelliteConfigProvider } from '@/contexts/SatelliteConfigContext';
+import { SatelliteWatchProvider } from '@/contexts/SatelliteWatchContext';
+import { DashboardSync } from '@/components/DashboardSync';
 import { fetchNoaaEphemerisData, fetchNoaaMagnetometerData, fetchNoaaPlasmaData } from '@/services/noaaSolarWindService';
 import { fetchNoaaAlerts } from '@/services/noaaAlertsService';
 import { fetchTleGroup } from '@/services/celestrakService';
+import { buildL1ForecastPanelData } from '@/services/l1ForecastPanelService';
+import { fetchNoaaStormScales } from '@/services/noaaStormScalesService';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function Home() {
-  const [noaaMagData, noaaPlasmaData, noaaEphemerisData, noaaAlertsData, celestrakData] = await Promise.all([
+  const [noaaMagData, noaaPlasmaData, noaaEphemerisData, noaaAlertsData, celestrakData, l1ForecastData, stormScalesData] = await Promise.all([
     fetchNoaaMagnetometerData(),
     fetchNoaaPlasmaData(),
     fetchNoaaEphemerisData(),
     fetchNoaaAlerts(),
     fetchTleGroup('stations'),
+    buildL1ForecastPanelData(),
+    fetchNoaaStormScales(),
   ]);
 
   const isNoaaConnected = noaaMagData.isConnected || noaaPlasmaData.isConnected;
@@ -33,88 +39,153 @@ export default async function Home() {
   const lastUpdated = magTime > plasmaTime ? noaaMagData.lastUpdated : (plasmaTime > 0 ? noaaPlasmaData.lastUpdated : null);
   const partialAvailability = (noaaMagData.isConnected && !noaaPlasmaData.isConnected) || (!noaaMagData.isConnected && noaaPlasmaData.isConnected);
 
+  // One extensible list of the live feeds, shown in the header's "Data sources" dropdown.
+  const sources: SourceStatus[] = [
+    { name: 'NOAA Solar Wind (RTSW)', connected: isNoaaConnected, partial: partialAvailability, lastUpdated },
+    { name: 'NOAA Alerts', connected: noaaAlertsData.isConnected, lastUpdated: noaaAlertsData.lastUpdated },
+    { name: 'NOAA Storm Scales (G/S/R)', connected: stormScalesData.observed !== null, lastUpdated: stormScalesData.observed?.observedAtUtc ?? stormScalesData.fetchedAtUtc },
+    { name: 'CelesTrak (TLE)', connected: celestrakData.isConnected, lastUpdated: celestrakData.lastUpdated },
+  ];
+
   return (
     <AppShell>
-      <TopStatusBar
-        noaaMagConnected={isNoaaConnected}
-        noaaMagLastUpdated={lastUpdated}
-        noaaMagPartial={partialAvailability}
-        noaaAlertsConnected={noaaAlertsData.isConnected}
-        noaaAlertsLastUpdated={noaaAlertsData.lastUpdated}
-        celesTrakConnected={celestrakData.isConnected}
-        celesTrakLastUpdated={celestrakData.lastUpdated}
-      />
+      <TopStatusBar sources={sources} />
 
       <SatelliteSelectionProvider>
         <SatelliteConfigProvider initialTleData={celestrakData}>
-          <main className="min-h-0 flex-1 overflow-visible xl:overflow-hidden">
-            <div className="grid min-h-0 grid-cols-1 gap-3 lg:grid-cols-[340px_minmax(0,1fr)] xl:h-full xl:grid-cols-[360px_minmax(0,1fr)_370px]">
-              <aside className="min-h-0 space-y-3 xl:h-full xl:overflow-y-auto xl:pr-1">
-                <div className="min-h-[560px] xl:h-[58vh] xl:min-h-[460px]">
-                  <SolarWindPanel
-                    noaaMagData={noaaMagData}
-                    noaaPlasmaData={noaaPlasmaData}
-                    noaaEphemerisData={noaaEphemerisData}
-                  />
-                </div>
+          <SatelliteWatchProvider>
+            {/* Persists tracked satellites + instruments/thresholds to Supabase per account. */}
+            <DashboardSync />
+            <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-visible xl:overflow-hidden">
+              {/* Titular: a la izquierda lo observado en Tierra (G real + viento solar llegando),
+                  a la derecha lo medido en L1 + el pronóstico de G y su tiempo de llegada. */}
+              <MissionHeadlineBar l1={l1ForecastData} observed={stormScalesData.observed} />
 
-                <div className="min-h-[420px] xl:h-[36vh] xl:min-h-[340px]">
-                  <PhysicalFluxPanel
-                    compact
-                    noaaMagData={noaaMagData}
-                    noaaPlasmaData={noaaPlasmaData}
-                  />
-                </div>
-              </aside>
+              <ResizableMissionLayout
+                left={(
+                  <ExpandableMissionWidget
+                    title="L1 -> Earth Propagation"
+                    className="xl:min-h-0 xl:flex-1"
+                    detail={(
+                      <div className="h-full min-h-[720px]">
+                        <L1PropagationPanel data={l1ForecastData} expanded />
+                      </div>
+                    )}
+                  >
+                    <div className="min-h-[760px] xl:h-full xl:min-h-0">
+                      <L1PropagationPanel data={l1ForecastData} />
+                    </div>
+                  </ExpandableMissionWidget>
+                )}
+                center={(
+                  <>
+                    {/* SITUACIÓN — vista del globo + operaciones inmediatas */}
+                    <div className="h-[520px] overflow-hidden rounded-lg border border-cyan-500/15 bg-slate-950/50 lg:h-[560px] xl:h-auto xl:min-h-0 xl:flex-1">
+                      <VisualizationSwitcher
+                        noaaMagData={noaaMagData}
+                        noaaPlasmaData={noaaPlasmaData}
+                        noaaEphemerisData={noaaEphemerisData}
+                      />
+                    </div>
 
-              <section className="min-h-0 min-w-0 space-y-3 lg:flex lg:flex-col lg:space-y-0 xl:h-full xl:overflow-hidden">
-                <div className="h-[520px] overflow-hidden rounded-lg border border-cyan-500/15 bg-slate-950/50 lg:h-[560px] xl:h-auto xl:min-h-0 xl:flex-1">
-                  <VisualizationSwitcher
-                    noaaMagData={noaaMagData}
-                    noaaPlasmaData={noaaPlasmaData}
-                    noaaEphemerisData={noaaEphemerisData}
-                  />
-                </div>
+                    <div className="grid min-h-[520px] gap-3 lg:grid-cols-2 xl:h-[270px] xl:min-h-[240px] xl:shrink-0">
+                      <ExpandableMissionWidget
+                        title="Forecast Heatmaps"
+                        detail={(
+                          <div className="h-full min-h-[620px]">
+                            <ArrivalHeatmapPanel data={l1ForecastData} expanded />
+                          </div>
+                        )}
+                      >
+                        <div className="h-full min-h-[240px]">
+                          <ArrivalHeatmapPanel data={l1ForecastData} />
+                        </div>
+                      </ExpandableMissionWidget>
 
-                <div className="grid min-h-[520px] gap-3 lg:grid-cols-2 xl:h-[285px] xl:min-h-[250px] xl:shrink-0">
-                  <SatelliteOperatorReport
-                    compact
-                    noaaMagData={noaaMagData}
-                    noaaPlasmaData={noaaPlasmaData}
-                    noaaEphemerisData={noaaEphemerisData}
-                  />
-                  <AlertsPanel compact noaaAlertsData={noaaAlertsData} />
-                </div>
-              </section>
+                      <ExpandableMissionWidget
+                        title="NOAA Alerts"
+                        detail={(
+                          <div className="h-full min-h-[620px]">
+                            <AlertsPanel noaaAlertsData={noaaAlertsData} />
+                          </div>
+                        )}
+                      >
+                        <div className="h-full min-h-[240px]">
+                          <AlertsPanel compact noaaAlertsData={noaaAlertsData} />
+                        </div>
+                      </ExpandableMissionWidget>
+                    </div>
+                  </>
+                )}
+                right={(
+                  <>
+                    {/* PRONÓSTICO · IMPACTO — asesoría del satélite + watch-list con umbrales */}
+                    <ExpandableMissionWidget
+                      title="Satellite Operator Report"
+                      detail={(
+                        <div className="h-full min-h-[620px]">
+                          <SatelliteOperatorReport
+                            noaaMagData={noaaMagData}
+                            noaaPlasmaData={noaaPlasmaData}
+                            noaaEphemerisData={noaaEphemerisData}
+                            kp={l1ForecastData.latest.kp}
+                          />
+                        </div>
+                      )}
+                    >
+                      <div className="min-h-[430px] xl:h-[44vh] xl:min-h-0">
+                        <SatelliteOperatorReport
+                          compact
+                          noaaMagData={noaaMagData}
+                          noaaPlasmaData={noaaPlasmaData}
+                          noaaEphemerisData={noaaEphemerisData}
+                          kp={l1ForecastData.latest.kp}
+                        />
+                      </div>
+                    </ExpandableMissionWidget>
 
-              <aside className="min-h-0 space-y-3 lg:col-span-2 lg:grid lg:grid-cols-2 lg:gap-3 lg:space-y-0 xl:col-span-1 xl:block xl:h-full xl:overflow-y-auto xl:pr-1 xl:space-y-3">
-                <div className="min-h-[240px] xl:h-[220px] xl:min-h-0">
-                  <SelectedSatellitePanel />
-                </div>
-
-                <div className="min-h-[240px] xl:h-[150px] xl:min-h-0">
-                  <DataReadinessPanel
-                    noaaMagData={noaaMagData}
-                    noaaPlasmaData={noaaPlasmaData}
-                    noaaAlertsData={noaaAlertsData}
-                    celestrakData={celestrakData}
-                  />
-                </div>
-
-                <div className="min-h-[430px] xl:h-[370px] xl:min-h-0">
-                  <ForecastModulePanel
-                    compact
-                    noaaPlasmaData={noaaPlasmaData}
-                    noaaEphemerisData={noaaEphemerisData}
-                  />
-                </div>
-
-                <div className="min-h-[280px] xl:h-[300px] xl:min-h-0">
-                  <ModelThresholdsPanel compact />
-                </div>
-              </aside>
-            </div>
-          </main>
+                    <ExpandableMissionWidget
+                      title="Selected Satellite"
+                      detail={(
+                        <div className="h-full min-h-[620px]">
+                          <SatelliteWatchlistPanel
+                            noaaMagData={noaaMagData}
+                            noaaPlasmaData={noaaPlasmaData}
+                            kp={l1ForecastData.latest.kp}
+                          />
+                        </div>
+                      )}
+                    >
+                      <div className="min-h-[240px] xl:h-[30vh] xl:min-h-0">
+                        <SatelliteWatchlistPanel
+                          compact
+                          noaaMagData={noaaMagData}
+                          noaaPlasmaData={noaaPlasmaData}
+                          kp={l1ForecastData.latest.kp}
+                        />
+                      </div>
+                    </ExpandableMissionWidget>
+                  </>
+                )}
+                diagnostics={(
+                  <>
+                    {/* DIAGNÓSTICO — contexto/salud de datos, plegado por defecto */}
+                    <div className="min-h-[150px]">
+                      <DataReadinessPanel
+                        noaaMagData={noaaMagData}
+                        noaaPlasmaData={noaaPlasmaData}
+                        noaaAlertsData={noaaAlertsData}
+                        celestrakData={celestrakData}
+                      />
+                    </div>
+                    <div className="min-h-[300px]">
+                      <ModelThresholdsPanel compact />
+                    </div>
+                  </>
+                )}
+              />
+            </main>
+          </SatelliteWatchProvider>
         </SatelliteConfigProvider>
       </SatelliteSelectionProvider>
     </AppShell>

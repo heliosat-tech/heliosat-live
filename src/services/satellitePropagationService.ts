@@ -75,3 +75,22 @@ export function propagateSatelliteFromTle(tle: SatelliteTLE, date: Date): Propag
 
   return result;
 }
+
+/**
+ * Orbital period in minutes from the TLE mean motion (satrec.no is rad/min), or null if
+ * the TLE can't be parsed. Used to sample exactly one full orbit when drawing the path, so
+ * LEO, MEO, GEO and high-eccentricity orbits all render as a complete loop rather than a
+ * partial arc.
+ */
+export function orbitalPeriodMinutes(tle: SatelliteTLE): number | null {
+  try {
+    const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
+    const meanMotion = satrec.no; // radians per minute
+    if (typeof meanMotion === 'number' && meanMotion > 0) {
+      return (2 * Math.PI) / meanMotion;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

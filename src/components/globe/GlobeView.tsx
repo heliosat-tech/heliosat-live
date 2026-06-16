@@ -1,30 +1,38 @@
 "use client";
 import React, { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect } from 'react';
 import * as THREE from 'three';
-import { TriangleAlert } from 'lucide-react';
+import { RotateCw, TriangleAlert } from 'lucide-react';
 import { feature } from 'topojson-client';
 import type { GlobeMethods, GlobeProps } from 'react-globe.gl';
 import type { GeometryObject, Topology } from 'topojson-specification';
 import type { SatelliteTLE } from '@/services/celestrakService';
 import type { PropagatedSatelliteData } from '@/services/satellitePropagationService';
+import { getSubsolarPoint, normalizeLongitude } from '@/services/solarPositionService';
 import { useSatelliteSelection } from '@/contexts/SatelliteSelectionContext';
 
 const EARTH_RADIUS_KM = 6371;
 const MIN_CANVAS_SIZE = 1;
+// Earth's axial tilt (obliquity of the ecliptic): the angle between the spin axis and the
+// normal to the orbital (ecliptic) plane.
+const EARTH_OBLIQUITY_DEG = 23.44;
+// Drag sensitivity (radians of spin about the tilted axis per pixel) in axial-tilt mode.
+const AXIAL_DRAG_SENSITIVITY = 0.008;
 
 // Day/night illumination: a custom globe material that blends a daytime texture on the
-// Sun-facing hemisphere with the night-lights texture on the dark side, smoothly across
-// the terminator. The lit hemisphere tracks the real subsolar point (updated each minute);
-// `globeRotation` corrects for the camera's current point-of-view so the terminator stays
-// fixed to the actual geography. Recipe follows the react-globe.gl earth-day-night example.
+// Sun-facing hemisphere with the night-lights texture on the dark side, smoothly across the
+// terminator. The shader uses the sphere's local normal so the shadow stays locked to the
+// texture/geography as the presentation rotates. three-globe internally rotates the base
+// Earth mesh -90deg around Y to put Greenwich on its geographic +Z axis; compensate for that
+// when passing the subsolar longitude into the shader.
 const DAY_TEXTURE_URL = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
 const NIGHT_TEXTURE_URL = 'https://unpkg.com/three-globe/example/img/earth-night.jpg';
+const THREE_GLOBE_MESH_LONGITUDE_OFFSET_DEG = 90;
 
 const DAY_NIGHT_VERTEX_SHADER = `
-  varying vec3 vNormal;
+  varying vec3 vLocalNormal;
   varying vec2 vUv;
   void main() {
-    vNormal = normalize(normalMatrix * normal);
+    vLocalNormal = normalize(normal); // object-space normal (the geographic direction)
     vUv = uv;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
@@ -35,8 +43,7 @@ const DAY_NIGHT_FRAGMENT_SHADER = `
   uniform sampler2D dayTexture;
   uniform sampler2D nightTexture;
   uniform vec2 sunPosition;
-  uniform vec2 globeRotation;
-  varying vec3 vNormal;
+  varying vec3 vLocalNormal;
   varying vec2 vUv;
 
   float toRad(in float a) { return a * PI / 180.0; }
@@ -48,12 +55,9 @@ const DAY_NIGHT_FRAGMENT_SHADER = `
   }
 
   void main() {
-    float invLon = toRad(globeRotation.x);
-    float invLat = -toRad(globeRotation.y);
-    mat3 rotX = mat3(1, 0, 0, 0, cos(invLat), -sin(invLat), 0, sin(invLat), cos(invLat));
-    mat3 rotY = mat3(cos(invLon), 0, sin(invLon), 0, 1, 0, -sin(invLon), 0, cos(invLon));
-    vec3 rotatedSunDirection = rotX * rotY * Polar2Cartesian(sunPosition);
-    float intensity = dot(normalize(vNormal), normalize(rotatedSunDirection));
+    // Both vectors are in the globe's geographic frame, so the lit hemisphere is anchored to
+    // the real subsolar point and is invariant to camera orbit and to the globe's tilt/spin.
+    float intensity = dot(normalize(vLocalNormal), Polar2Cartesian(sunPosition));
     vec4 dayColor = texture2D(dayTexture, vUv);
     vec4 nightColor = texture2D(nightTexture, vUv);
     float blendFactor = smoothstep(-0.12, 0.12, intensity);
@@ -61,18 +65,25 @@ const DAY_NIGHT_FRAGMENT_SHADER = `
   }
 `;
 
-/** Subsolar point [lng, lat] in degrees: where the Sun is directly overhead right now. */
-function subsolarPoint(date: Date): [number, number] {
-  const dayMs = 86_400_000;
-  const yearStart = Date.UTC(date.getUTCFullYear(), 0, 0);
-  const dayOfYear = (date.getTime() - yearStart) / dayMs; // fractional, 1..366
-  const declination = -23.44 * Math.cos((2 * Math.PI / 365) * (dayOfYear + 10)); // latitude
-  const b = (2 * Math.PI / 364) * (dayOfYear - 81);
-  const equationOfTimeMin = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b);
-  const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-  let longitude = -15 * (utcHours - 12 + equationOfTimeMin / 60);
-  longitude = ((longitude + 180) % 360 + 360) % 360 - 180; // normalize to [-180, 180]
-  return [longitude, declination];
+function globeMeshSunPosition(date: Date): [number, number] {
+  const subsolar = getSubsolarPoint(date);
+  return [
+    normalizeLongitude(subsolar.longitudeDeg + THREE_GLOBE_MESH_LONGITUDE_OFFSET_DEG),
+    subsolar.latitudeDeg,
+  ];
+}
+
+// Geographic (lng, lat) → unit direction in the globe's local frame, using the same convention
+// as the day/night shader's Polar2Cartesian (and three-globe's vertex normals). This lets us
+// orient the globe so the real subsolar direction lands exactly where the texture is lit.
+function geoToLocalDirection(lng: number, lat: number): THREE.Vector3 {
+  const theta = THREE.MathUtils.degToRad(90 - lng);
+  const phi = THREE.MathUtils.degToRad(90 - lat);
+  return new THREE.Vector3(
+    Math.sin(phi) * Math.cos(theta),
+    Math.cos(phi),
+    Math.sin(phi) * Math.sin(theta),
+  );
 }
 
 const canCreateWebGLContext = () => {
@@ -108,13 +119,13 @@ type SatellitePoint = {
 };
 
 type OrbitPathPoint = [number, number, number];
-type OrbitPathDatum = { coords: OrbitPathPoint[] };
+interface OrbitPath { coords: OrbitPathPoint[]; isSelected: boolean }
 type WorldAtlasTopology = Topology<{ countries: GeometryObject }>;
 
 interface GlobeViewProps {
   tles: SatelliteTLE[];
   propagatedSatellites: PropagatedSatelliteData[];
-  orbitPathPoints: OrbitPathPoint[];
+  orbitPaths: OrbitPath[];
   showCount: string;
 }
 
@@ -140,7 +151,7 @@ const GlobeUnavailable: React.FC<{ message: string; showCount: string }> = ({ me
 export const GlobeView: React.FC<GlobeViewProps> = ({
   tles,
   propagatedSatellites,
-  orbitPathPoints,
+  orbitPaths = [],
   showCount,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -160,13 +171,16 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
         dayTexture: { value: loader.load(DAY_TEXTURE_URL) },
         nightTexture: { value: loader.load(NIGHT_TEXTURE_URL) },
         sunPosition: { value: new THREE.Vector2() },
-        globeRotation: { value: new THREE.Vector2(60, 12) }, // matches the initial point-of-view
       },
       vertexShader: DAY_NIGHT_VERTEX_SHADER,
       fragmentShader: DAY_NIGHT_FRAGMENT_SHADER,
     });
   });
-  const materialRef = useRef<THREE.ShaderMaterial | null>(globeMaterial);
+  // Axis-lock mode: 'off' = free orbit; 'tilted' = real obliquity (23.44°); 'vertical' = 0°
+  // (upright axis → the day-side terminator shows perfectly vertical).
+  const [axialMode, setAxialMode] = useState<'off' | 'tilted' | 'vertical'>('off');
+  const axisLineRef = useRef<THREE.Line | null>(null);
+  const spinAngleRef = useRef(0);
   const { selectedTle, setSelectedTle } = useSatelliteSelection();
 
   // Dynamic import — globe.gl requires browser APIs
@@ -215,7 +229,7 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
   useEffect(() => {
     if (!globeMaterial) return;
     const applySun = () => {
-      const [lng, lat] = subsolarPoint(new Date());
+      const [lng, lat] = globeMeshSunPosition(new Date());
       globeMaterial.uniforms.sunPosition.value.set(lng, lat);
     };
     applySun();
@@ -288,26 +302,204 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
     frameGlobe(350);
   }, [dims.h, dims.w, frameGlobe]);
 
-  // Build satellite point objects from propagated data
-  const satellitePoints = useMemo(() => {
-    return propagatedSatellites
-      .filter(d => d.positionAvailable && d.latitude !== null && d.longitude !== null && d.altitudeKm !== null)
-      .map(d => ({
-        name: d.satelliteName,
-        lat: d.latitude as number,
-        lng: d.longitude as number,
-        // Normalize altitude: scale up slightly for visual clarity
-        alt: Math.max(0.02, (d.altitudeKm as number) / EARTH_RADIUS_KM),
-        isSelected: selectedTle?.name === d.satelliteName,
-        tle: tles.find(t => t.name === d.satelliteName) ?? null,
-      }));
-  }, [propagatedSatellites, selectedTle, tles]);
+  // Axial-tilt mode: tilt the globe to the real obliquity (visible + fixed) and let the user
+  // spin it ONLY about that tilted axis by dragging horizontally — the axis stays put and a
+  // thin line marks it. Free orbiting is disabled while active and restored on toggle off.
+  useEffect(() => {
+    let cached: THREE.Object3D | null = null;
+    const getGlobeObject = (): THREE.Object3D | null => {
+      if (cached) return cached;
+      const scene = globeRef.current?.scene();
+      if (!scene) return null;
+      // The three-globe object is the scene descendant exposing a globeMaterial() method.
+      scene.traverse(child => {
+        if (!cached && typeof (child as { globeMaterial?: unknown }).globeMaterial === 'function') {
+          cached = child;
+        }
+      });
+      return cached;
+    };
+    const removeAxisLine = () => {
+      const line = axisLineRef.current;
+      if (line?.parent) line.parent.remove(line);
+    };
+    const controls = globeRef.current?.controls();
 
-  // Orbit path for selected satellite only
-  const pathsData = useMemo(() => {
-    if (orbitPathPoints.length < 2) return [];
-    return [{ coords: orbitPathPoints.map(([lat, lng, alt]) => [lat, lng, alt]) }];
-  }, [orbitPathPoints]) satisfies OrbitPathDatum[];
+    if (axialMode === 'off') {
+      getGlobeObject()?.quaternion.identity();
+      removeAxisLine();
+      if (controls) controls.enableRotate = true;
+      return;
+    }
+
+    if (controls) controls.enableRotate = false; // the drag below provides the constrained spin
+    spinAngleRef.current = 0;
+
+    const isVertical = axialMode === 'vertical';
+    const { longitudeDeg: sunLng, latitudeDeg: sunLat } = getSubsolarPoint(new Date());
+
+    // Camera alignment so the day/night terminator splits the disc cleanly:
+    //  - 'tilted': look edge-on to the terminator longitude (the line ends up rolled by the season).
+    //  - 'vertical': look straight on (+Z); paired with the orientation below the terminator lands
+    //    exactly vertical and centred.
+    const globeForAlign = globeRef.current;
+    if (globeForAlign) {
+      const current = globeForAlign.pointOfView();
+      globeForAlign.pointOfView(
+        isVertical
+          ? { lat: 0, lng: 0, altitude: current.altitude }
+          : { lat: 0, lng: sunLng + 90, altitude: current.altitude },
+        800,
+      );
+    }
+
+    // Orientation strategy:
+    //  - 'tilted': fixed obliquity tilt about Z; the user spins about the (tilted) local Y axis.
+    //  - 'vertical': rotate so the subsolar direction faces world +X (camera right) → the
+    //    terminator falls in the YZ plane = an exactly vertical day/night line; the user then
+    //    spins about the world Y axis, so the lit geography rides along with the spin.
+    const tilt = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 0, 1),
+      THREE.MathUtils.degToRad(EARTH_OBLIQUITY_DEG),
+    );
+    const alignToTerminator = (() => {
+      const sun = geoToLocalDirection(sunLng, sunLat); // local subsolar direction
+      const pole = new THREE.Vector3(0, 1, 0);
+      const polePerp = pole.clone().addScaledVector(sun, -pole.dot(sun)).normalize();
+      // makeBasis maps world {X,Y,Z} → {sun, polePerp, sun×polePerp}; its inverse rotates the
+      // local subsolar direction to +X while keeping the north pole pointing upward.
+      const basis = new THREE.Matrix4().makeBasis(
+        sun, polePerp, new THREE.Vector3().crossVectors(sun, polePerp),
+      );
+      return new THREE.Quaternion().setFromRotationMatrix(basis.invert());
+    })();
+    const spinAxis = new THREE.Vector3(0, 1, 0);
+    const spinQuat = new THREE.Quaternion();
+
+    const ensureAxisLine = (parent: THREE.Object3D) => {
+      if (!axisLineRef.current) {
+        const radius = globeRef.current?.getGlobeRadius() ?? 100;
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, -1.35 * radius, 0),
+          new THREE.Vector3(0, 1.35 * radius, 0),
+        ]);
+        const material = new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.75 });
+        axisLineRef.current = new THREE.Line(geometry, material);
+      }
+      if (axisLineRef.current.parent !== parent) parent.add(axisLineRef.current);
+    };
+
+    let frame = 0;
+    const tick = () => {
+      // Re-assert each frame so a globe re-render can't re-enable free orbit while active.
+      const liveControls = globeRef.current?.controls();
+      if (liveControls) liveControls.enableRotate = false;
+      const globeObject = getGlobeObject();
+      if (globeObject) {
+        spinQuat.setFromAxisAngle(spinAxis, spinAngleRef.current);
+        if (isVertical) {
+          // q = spin(worldY) * align → vertical terminator at angle 0; spinning turns the globe
+          // (and its geography-locked day/night) about the world vertical axis.
+          globeObject.quaternion.copy(spinQuat).multiply(alignToTerminator);
+          // Spin axis is world Y, so the axis line lives in world space (the scene) and stays
+          // vertical while the globe turns under it — marking the vertical day/night line.
+          const scene = globeRef.current?.scene();
+          if (scene) ensureAxisLine(scene);
+        } else {
+          // q = tilt * spin(userAngle) → the user spins about the local (tilted) Y axis only.
+          globeObject.quaternion.copy(tilt).multiply(spinQuat);
+          ensureAxisLine(globeObject);
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+
+    // Horizontal drag over the globe spins it about the tilted axis (vertical drag ignored).
+    let dragging = false;
+    let lastX = 0;
+    const onDown = (e: PointerEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) return;
+      dragging = true;
+      lastX = e.clientX;
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      spinAngleRef.current += (e.clientX - lastX) * AXIAL_DRAG_SENSITIVITY;
+      lastX = e.clientX;
+    };
+    const onUp = () => { dragging = false; };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      getGlobeObject()?.quaternion.identity();
+      removeAxisLine();
+      if (controls) controls.enableRotate = true;
+    };
+  }, [axialMode]);
+
+  // Persistent marker objects keyed by satellite name. three-globe keys points by datum object
+  // identity, so to make a marker glide between the ~1 Hz position updates we hand it back the
+  // same object reference each update and mutate its lat/lng/alt. This cache is not render state;
+  // useState only gives it a stable lifetime without reading a ref during render.
+  const [pointCache] = useState(() => new Map<string, SatellitePoint>());
+
+  // Build satellite point objects from propagated data, reusing cached references so motion is
+  // continuous. A new array is returned each tick (so react-globe.gl re-digests) but it holds the
+  // SAME per-satellite objects, which is what lets three-globe tween position instead of re-entering.
+  const satellitePoints = useMemo(() => {
+    const cache = pointCache;
+    const live = new Set<string>();
+    const points: SatellitePoint[] = [];
+
+    for (const d of propagatedSatellites) {
+      if (!d.positionAvailable || d.latitude === null || d.longitude === null || d.altitudeKm === null) continue;
+      const lat = d.latitude;
+      const lng = d.longitude;
+      // Normalize altitude: scale up slightly for visual clarity.
+      const alt = Math.max(0.02, d.altitudeKm / EARTH_RADIUS_KM);
+
+      const existing = cache.get(d.satelliteName);
+      // Antimeridian guard: a >180° longitude jump means the ground track wrapped past the date
+      // line. Tweening across it would streak the marker over the whole globe in one second, so
+      // we drop the cached object and let a fresh one re-appear at the new spot (a brief snap on
+      // that rare crossing, instead of a long sweep). Normal updates always reuse → smooth glide.
+      const wrapped = existing && Math.abs(lng - existing.lng) > 180;
+      const point: SatellitePoint = existing && !wrapped
+        ? existing
+        : { name: d.satelliteName, lat, lng, alt, isSelected: false, tle: null };
+
+      point.lat = lat;
+      point.lng = lng;
+      point.alt = alt;
+      point.isSelected = selectedTle?.name === d.satelliteName;
+      point.tle = tles.find(t => t.name === d.satelliteName) ?? null;
+
+      cache.set(d.satelliteName, point);
+      live.add(d.satelliteName);
+      points.push(point);
+    }
+
+    // Forget markers for satellites that are no longer tracked so three-globe removes their meshes.
+    for (const name of cache.keys()) {
+      if (!live.has(name)) cache.delete(name);
+    }
+
+    return points;
+  }, [pointCache, propagatedSatellites, selectedTle, tles]);
+
+  // One orbit loop per tracked satellite; keep only paths with enough points to draw.
+  // Defensive against an undefined prop / partial coords (e.g. a stale HMR state).
+  const pathsData = useMemo(
+    () => (orbitPaths ?? []).filter(path => (path?.coords?.length ?? 0) >= 2),
+    [orbitPaths],
+  );
 
   const handlePointClick = useCallback((point: SatellitePoint) => {
     if (point?.tle) setSelectedTle(point.tle);
@@ -337,13 +529,38 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
         </div>
       )}
 
+      {/* Axis-lock toggles: spin about a fixed axis (tilted 23.44° or vertical 0°), aligned to
+          the day/night terminator. Selecting one deselects the other. */}
+      <div className="absolute right-2 top-2 z-20 flex flex-col items-stretch gap-1.5">
+        <button
+          type="button"
+          onClick={() => setAxialMode(mode => (mode === 'tilted' ? 'off' : 'tilted'))}
+          aria-pressed={axialMode === 'tilted'}
+          title="Inclina la Tierra a su oblicuidad real (23.44°) y fija el eje: arrastra para girarla solo sobre ese eje. Vuelve a pulsar para rotación libre."
+          className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${axialMode === 'tilted' ? 'border-cyan-400/50 bg-cyan-400/15 text-cyan-200' : 'border-slate-700/60 bg-slate-900/80 text-slate-400 hover:border-slate-600/70 hover:text-slate-200'}`}
+        >
+          <RotateCw className={`h-3 w-3 ${axialMode === 'tilted' ? 'text-cyan-300' : ''}`} aria-hidden="true" />
+          Eje 23.4°
+        </button>
+        <button
+          type="button"
+          onClick={() => setAxialMode(mode => (mode === 'vertical' ? 'off' : 'vertical'))}
+          aria-pressed={axialMode === 'vertical'}
+          title="Eje vertical (0°): encara la cara diurna con el terminador perfectamente vertical. Arrastra para girarla sobre el eje vertical. Vuelve a pulsar para rotación libre."
+          className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${axialMode === 'vertical' ? 'border-cyan-400/50 bg-cyan-400/15 text-cyan-200' : 'border-slate-700/60 bg-slate-900/80 text-slate-400 hover:border-slate-600/70 hover:text-slate-200'}`}
+        >
+          <RotateCw className={`h-3 w-3 ${axialMode === 'vertical' ? 'text-cyan-300' : ''}`} aria-hidden="true" />
+          Eje 0°
+        </button>
+      </div>
+
       {/* Satellite count label */}
       <div className="absolute bottom-2 left-2 z-20 text-[10px] font-mono text-slate-400 bg-slate-900/80 px-2 py-1 rounded">
         {showCount}
       </div>
 
       {/* Orbit path disclaimer */}
-      {orbitPathPoints.length > 0 && (
+      {orbitPaths.length > 0 && (
         <div className="absolute bottom-2 right-2 z-20 text-[10px] font-mono text-cyan-400/60 bg-slate-900/80 px-2 py-1 rounded">
           TLE-derived propagated path
         </div>
@@ -356,10 +573,6 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
         globeOffset={[0, 0]}
         backgroundColor="rgba(2,6,23,1)"
         globeMaterial={globeMaterial ?? undefined}
-        onZoom={(pov: { lat: number; lng: number; altitude: number }) => {
-          const material = materialRef.current;
-          if (material && pov) material.uniforms.globeRotation.value.set(pov.lng, pov.lat);
-        }}
         atmosphereColor="#1e4080"
         atmosphereAltitude={0.18}
         polygonsData={worldPolygons}
@@ -376,6 +589,9 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
         pointAltitude="alt"
         pointColor={(point) => (point as SatellitePoint).isSelected ? '#22d3ee' : '#38bdf8'}
         pointRadius={(point) => (point as SatellitePoint).isSelected ? 0.7 : 0.35}
+        // Tween each marker's position between the ~1 Hz updates so it glides along the orbit as a
+        // continuous motion. Relies on the stable per-satellite objects above (matched by identity).
+        pointsTransitionDuration={1000}
         pointLabel={(point) => {
           const satellite = point as SatellitePoint;
           return `<div style="background:#0f172a;border:1px solid #334155;padding:4px 8px;border-radius:4px;font-family:monospace;font-size:11px;color:#e2e8f0">${satellite.name}</div>`;
@@ -386,8 +602,10 @@ export const GlobeView: React.FC<GlobeViewProps> = ({
         pathPointLat={(point) => readPathCoordinate(point, 0)}
         pathPointLng={(point) => readPathCoordinate(point, 1)}
         pathPointAlt={(point) => readPathCoordinate(point, 2)}
-        pathColor={() => '#22d3ee50'}
-        pathStroke={1.5}
+        pathColor={(path: object) => ((path as OrbitPath).isSelected ? 'rgba(103,232,249,0.85)' : 'rgba(56,189,248,0.32)')}
+        pathStroke={0.8}
+        // Orbits are stable; draw instantly (no per-update redraw animation).
+        pathTransitionDuration={0}
         enablePointerInteraction={true}
       />
     </div>
