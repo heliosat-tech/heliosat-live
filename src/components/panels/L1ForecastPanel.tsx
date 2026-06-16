@@ -91,6 +91,15 @@ const HEATMAP_WINDOWS: Array<{ key: HeatmapWindowKey; label: string }> = [
   { key: '1y', label: '1 y' },
 ];
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HEATMAP_WINDOW_DAYS: Record<Exclude<HeatmapWindowKey, 'live'>, number> = {
+  '24h': 1,
+  '7d': 7,
+  '30d': 31,
+  '90d': 92,
+  '1y': 366,
+};
+
 interface TransitSources {
   speedKmS: string | null;
   bzNt: string | null;
@@ -128,8 +137,22 @@ interface HeatmapReplaySeries {
 
 const HEATMAP_REPLAY_CACHE = new Map<HeatmapWindowKey, HeatmapReplaySeries>();
 
-async function loadHeatmapReplay(windowKey: Exclude<HeatmapWindowKey, 'live'>): Promise<HeatmapReplaySeries> {
+function isReplaySeriesValidForWindow(windowKey: Exclude<HeatmapWindowKey, 'live'>, series: HeatmapReplaySeries) {
+  if (series.window !== windowKey) return false;
+  const spanMs = series.endMs - series.startMs;
+  return spanMs >= HEATMAP_WINDOW_DAYS[windowKey] * DAY_MS * 0.8;
+}
+
+function cachedHeatmapReplay(windowKey: Exclude<HeatmapWindowKey, 'live'>) {
   const cached = HEATMAP_REPLAY_CACHE.get(windowKey);
+  if (!cached) return null;
+  if (isReplaySeriesValidForWindow(windowKey, cached)) return cached;
+  HEATMAP_REPLAY_CACHE.delete(windowKey);
+  return null;
+}
+
+async function loadHeatmapReplay(windowKey: Exclude<HeatmapWindowKey, 'live'>): Promise<HeatmapReplaySeries> {
+  const cached = cachedHeatmapReplay(windowKey);
   if (cached) return cached;
 
   const response = await fetch(`/api/console/corridor?window=${windowKey}`, {
@@ -159,6 +182,10 @@ async function loadHeatmapReplay(windowKey: Exclude<HeatmapWindowKey, 'live'>): 
     gForecast: (payload.gForecast ?? []).slice().sort((a, b) => a.t - b.t),
     coverage: payload.coverage,
   };
+
+  if (!isReplaySeriesValidForWindow(windowKey, series)) {
+    throw new Error(`Forecast history returned an incomplete ${windowKey} range.`);
+  }
 
   HEATMAP_REPLAY_CACHE.set(windowKey, series);
   return series;
@@ -885,14 +912,18 @@ function ArrivalHeatmaps({ data, expanded }: { data: L1ForecastPanelData; expand
   const [showDriverLegend, setShowDriverLegend] = useState(false);
   const prefetchedRef = useRef(false);
   const isReplay = expanded && windowKey !== 'live';
-  const activeReplay = isReplay && replay?.window === windowKey ? replay : null;
+  const activeReplay = isReplay && replay && isReplaySeriesValidForWindow(windowKey, replay) ? replay : null;
   const replayLoading = isReplay && !activeReplay && replayError === null;
 
   const selectWindow = useCallback((key: HeatmapWindowKey) => {
     setWindowKey(key);
     setReplayError(null);
-    const cached = HEATMAP_REPLAY_CACHE.get(key);
-    if (cached) setReplay(cached);
+    if (key === 'live') {
+      setReplay(null);
+      return;
+    }
+    const cached = cachedHeatmapReplay(key);
+    setReplay(cached);
   }, []);
 
   useEffect(() => {
@@ -913,7 +944,7 @@ function ArrivalHeatmaps({ data, expanded }: { data: L1ForecastPanelData; expand
     prefetchedRef.current = true;
     void (async () => {
       for (const window of HEATMAP_WINDOWS) {
-        if (window.key === 'live' || window.key === windowKey || HEATMAP_REPLAY_CACHE.has(window.key)) continue;
+        if (window.key === 'live' || window.key === windowKey || cachedHeatmapReplay(window.key)) continue;
         try {
           await loadHeatmapReplay(window.key);
           await new Promise(resolve => setTimeout(resolve, 350));
