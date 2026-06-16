@@ -4,7 +4,14 @@ import type { SatelliteTLE, CelesTrakResponse } from '@/services/celestrakServic
 
 export type TleGroup = 'stations' | 'weather' | 'starlink' | 'active';
 
-export const getSatelliteKey = (tle: SatelliteTLE) => `${tle.source}:${tle.name}`;
+// NORAD catalog number (TLE line 1, cols 3-7) — unique per object. The full "active"
+// catalog repeats names (e.g. several "HULIANWANG JISHU SHIYAN*"), so keying by name
+// collided as React keys; the catalog number never does.
+const noradId = (tle: SatelliteTLE): string => {
+  const id = tle.line1?.slice(2, 7).trim();
+  return id && /^\d+$/.test(id) ? id : tle.name;
+};
+export const getSatelliteKey = (tle: SatelliteTLE) => `${tle.source}:${noradId(tle)}`;
 
 interface SatelliteConfigCtx {
   group: TleGroup;
@@ -20,6 +27,8 @@ interface SatelliteConfigCtx {
   toggleTrackedTle: (tle: SatelliteTLE) => void;
   removeTrackedTle: (tle: SatelliteTLE) => void;
   clearTrackedTles: () => void;
+  /** Replace the whole tracked set at once (used to hydrate from saved/remote config). */
+  replaceTrackedTles: (tles: SatelliteTLE[]) => void;
   tleLoading: boolean;
   isModalOpen: boolean;
   openModal: () => void;
@@ -128,12 +137,16 @@ export const SatelliteConfigProvider: React.FC<ProviderProps> = ({ children, ini
     setTrackedTles([]);
   }, []);
 
+  const replaceTrackedTles = useCallback((tles: SatelliteTLE[]) => {
+    setTrackedTles(tles);
+  }, []);
+
   return (
     <SatelliteConfigContext.Provider value={{
       group, setGroup, search, setSearch,
       orbitPropagationEnabled, setOrbitPropagationEnabled,
       tleData, filteredTles,
-      trackedTles, trackedKeys, toggleTrackedTle, removeTrackedTle, clearTrackedTles,
+      trackedTles, trackedKeys, toggleTrackedTle, removeTrackedTle, clearTrackedTles, replaceTrackedTles,
       tleLoading,
       isModalOpen, openModal, closeModal,
     }}>

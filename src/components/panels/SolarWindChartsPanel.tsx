@@ -44,6 +44,30 @@ function parseChartValue(row: SolarWindChartRow, dataKey: SolarWindChartKey) {
   return Number.isFinite(parsedValue) ? parsedValue : null;
 }
 
+function formatYAxisTick(value: number | string, dataKey: SolarWindChartKey) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return '';
+  }
+
+  if (dataKey === 'temperature') {
+    const absoluteValue = Math.abs(numericValue);
+
+    if (absoluteValue >= 1_000_000) {
+      return `${(numericValue / 1_000_000).toFixed(1)}M`;
+    }
+
+    if (absoluteValue >= 1_000) {
+      return `${Math.round(numericValue / 1_000)}k`;
+    }
+
+    return numericValue.toFixed(0);
+  }
+
+  return numericValue.toFixed(1);
+}
+
 const SimpleLineChart: React.FC<ChartProps> = ({ data, dataKey, name, unit, color, hasData }) => {
   if (!hasData || data.length === 0) {
     return (
@@ -65,6 +89,7 @@ const SimpleLineChart: React.FC<ChartProps> = ({ data, dataKey, name, unit, colo
       [dataKey]: value
     };
   });
+  const isTemperatureChart = dataKey === 'temperature';
 
   return (
     <div className="mb-6">
@@ -80,7 +105,7 @@ const SimpleLineChart: React.FC<ChartProps> = ({ data, dataKey, name, unit, colo
           minHeight={128}
           initialDimension={{ width: 320, height: 128 }}
         >
-          <LineChart data={parsedData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+          <LineChart data={parsedData} margin={{ top: 5, right: 5, left: isTemperatureChart ? 4 : -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
             <XAxis 
               dataKey="timeShort" 
@@ -92,7 +117,9 @@ const SimpleLineChart: React.FC<ChartProps> = ({ data, dataKey, name, unit, colo
             <YAxis 
               stroke="#475569" 
               fontSize={10} 
-              tickFormatter={(val: number | string) => Number(val).toFixed(1)}
+              width={isTemperatureChart ? 48 : 40}
+              tickMargin={4}
+              tickFormatter={(val: number | string) => formatYAxisTick(val, dataKey)}
               domain={['auto', 'auto']}
             />
             <Tooltip 
