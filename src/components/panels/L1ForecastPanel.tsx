@@ -43,7 +43,6 @@ interface ChartRow {
   t: number;
   detected: number | null;
   forecast: number | null;
-  ml: number | null;
 }
 
 interface ElectronFluxChartRow {
@@ -58,12 +57,11 @@ const DETECTED_COLOR = '#34d399';
 const FORECAST_COLOR = '#38bdf8';
 const ELECTRON_DE1_COLOR = '#f59e0b';
 const ELECTRON_DE4_COLOR = '#e879f9';
-// Demo view: the only forecast line shown is the ML-corrected one, surfaced as "Forecast".
-// The legacy MRU ballistic line is intentionally hidden here.
+// A single "Forecast" line: the ML-corrected series where the model is available, falling back
+// to the MRU ballistic propagation otherwise, so a forecast always renders even without a model.
 const SERIES_LABELS: Record<keyof Omit<ChartRow, 't'>, string> = {
   detected: 'Detected L1',
   forecast: 'Forecast',
-  ml: 'Forecast',
 };
 
 const G_STYLES = [
@@ -162,10 +160,6 @@ async function loadHeatmapReplay(windowKey: Exclude<HeatmapWindowKey, 'live'>): 
     headers: { Accept: 'application/json' },
   });
 
-  if (response.status === 403) {
-    throw new Error('Admin access required for historical heatmaps.');
-  }
-
   if (!response.ok) {
     throw new Error('Forecast history is unavailable.');
   }
@@ -214,8 +208,10 @@ function bucketMinute(ms: number) {
 }
 
 function buildChartRows(data: L1ForecastPanelData, variable: ForecastVariable): ChartRow[] {
-  const byTime = new Map<number, ChartRow>();
-  const add = (points: L1ForecastSeriesPoint[], key: keyof Omit<ChartRow, 't'>) => {
+  // Collect each series by minute, then collapse to one forecast line: prefer the ML-corrected
+  // value, fall back to the MRU ballistic forecast wherever the model produced nothing.
+  const byTime = new Map<number, { t: number; detected: number | null; forecast: number | null; ml: number | null }>();
+  const add = (points: L1ForecastSeriesPoint[], key: 'detected' | 'forecast' | 'ml') => {
     for (const point of points) {
       const t = bucketMinute(point.t);
       const row = byTime.get(t) ?? { t, detected: null, forecast: null, ml: null };
@@ -227,7 +223,9 @@ function buildChartRows(data: L1ForecastPanelData, variable: ForecastVariable): 
   add(data.series.detected, 'detected');
   add(data.series.forecast, 'forecast');
   add(data.series.ml, 'ml');
-  return [...byTime.values()].sort((a, b) => a.t - b.t);
+  return [...byTime.values()]
+    .map(row => ({ t: row.t, detected: row.detected, forecast: row.ml ?? row.forecast }))
+    .sort((a, b) => a.t - b.t);
 }
 
 function formatClockMs(ms: number | null, timeZone = 'UTC') {
@@ -522,8 +520,7 @@ function ForecastLineChart({
   const config = VARIABLE_CONFIG[variable];
   const Icon = config.icon;
   const rows = useMemo(() => buildChartRows(data, variable), [data, variable]);
-  const hasData = rows.some(row => row.detected !== null || row.ml !== null);
-  const hasMl = rows.some(row => row.ml !== null);
+  const hasData = rows.some(row => row.detected !== null || row.forecast !== null);
   const domainEnd = rows.length ? Math.max(...rows.map(row => row.t), nowMs) : nowMs;
   const height = expanded ? 226 : 144;
 
@@ -584,8 +581,8 @@ function ForecastLineChart({
                 ]}
               />
               <Line name="detected" dataKey="detected" stroke={DETECTED_COLOR} strokeWidth={1.3} strokeDasharray="4 4" dot={false} connectNulls isAnimationActive={false} type="linear" />
-              {/* Demo: "Forecast" is the ML-corrected series (dataKey="ml"); legacy MRU line removed. */}
-              {hasMl && <Line name="ml" dataKey="ml" stroke={FORECAST_COLOR} strokeWidth={1.55} dot={false} connectNulls isAnimationActive={false} type="linear" />}
+              {/* Single forecast line: ML-corrected where available, MRU ballistic as fallback (folded in buildChartRows). */}
+              <Line name="forecast" dataKey="forecast" stroke={FORECAST_COLOR} strokeWidth={1.55} dot={false} connectNulls isAnimationActive={false} type="linear" />
             </LineChart>
           </ResponsiveContainer>
         ) : (
