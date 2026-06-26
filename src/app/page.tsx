@@ -44,7 +44,7 @@ export default async function Home() {
     { name: 'NOAA Solar Wind (RTSW)', connected: isNoaaConnected, partial: partialAvailability, lastUpdated },
     { name: 'NOAA Alerts', connected: noaaAlertsData.isConnected, lastUpdated: noaaAlertsData.lastUpdated },
     { name: 'NOAA Storm Scales (G/S/R)', connected: stormScalesData.observed !== null, lastUpdated: stormScalesData.observed?.observedAtUtc ?? stormScalesData.fetchedAtUtc },
-    { name: 'CelesTrak (TLE)', connected: celestrakData.isConnected, lastUpdated: celestrakData.lastUpdated },
+    { name: 'CelesTrak (TLE)', connected: celestrakData.isConnected, stale: celestrakData.stale, lastUpdated: celestrakData.lastUpdated },
   ];
 
   return (

@@ -43,19 +43,6 @@ export const useSatelliteConfig = () => {
   return ctx;
 };
 
-const parseTleText = (text: string, group: string): SatelliteTLE[] => {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const tles: SatelliteTLE[] = [];
-  for (let i = 0; i < lines.length - 2; i++) {
-    const cur = lines[i], n1 = lines[i + 1], n2 = lines[i + 2];
-    if (!cur.startsWith('1 ') && !cur.startsWith('2 ') && n1.startsWith('1 ') && n2.startsWith('2 ')) {
-      tles.push({ name: cur, line1: n1, line2: n2, source: `celestrak-${group}` });
-      i += 2;
-    }
-  }
-  return tles;
-};
-
 interface ProviderProps {
   children: React.ReactNode;
   initialTleData: CelesTrakResponse;
@@ -80,22 +67,16 @@ export const SatelliteConfigProvider: React.FC<ProviderProps> = ({ children, ini
     setTleLoading(!(nextGroup === 'stations' && tleData === initialTleData));
   }, [group, initialTleData, tleData]);
 
-  // Re-fetch when group changes (skip initial stations load — already server-fetched)
+  // Re-fetch when group changes (skip initial stations load — already server-fetched).
+  // Goes through our same-origin /api/tle proxy, which adds retry + last-good-cache resilience
+  // server-side; the 15s ceiling covers the worst-case server retry without hanging forever.
   useEffect(() => {
     if (group === 'stations' && tleData === initialTleData) return;
     let cancelled = false;
-    const url = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`;
-    fetch(url)
-      .then(r => { if (!r.ok) throw new Error(); return r.text(); })
-      .then(text => {
-        const tles = parseTleText(text, group);
-        if (cancelled) return;
-        setTleData({
-          isConnected: tles.length > 0,
-          lastUpdated: new Date().toISOString(),
-          errorMessage: tles.length === 0 ? 'No satellite data available' : null,
-          tles,
-        });
+    fetch(`/api/tle?group=${group}`, { signal: AbortSignal.timeout(15_000) })
+      .then(r => { if (!r.ok) throw new Error(); return r.json() as Promise<CelesTrakResponse>; })
+      .then(data => {
+        if (!cancelled) setTleData(data);
       })
       .catch(() => {
         if (!cancelled) {

@@ -56,13 +56,14 @@ interface ElectronFluxChartRow {
 
 const DETECTED_COLOR = '#34d399';
 const FORECAST_COLOR = '#38bdf8';
-const ML_COLOR = '#c084fc';
 const ELECTRON_DE1_COLOR = '#f59e0b';
 const ELECTRON_DE4_COLOR = '#e879f9';
+// Demo view: the only forecast line shown is the ML-corrected one, surfaced as "Forecast".
+// The legacy MRU ballistic line is intentionally hidden here.
 const SERIES_LABELS: Record<keyof Omit<ChartRow, 't'>, string> = {
   detected: 'Detected L1',
   forecast: 'Forecast',
-  ml: 'ML model',
+  ml: 'Forecast',
 };
 
 const G_STYLES = [
@@ -492,7 +493,7 @@ function StatTile({ label, value, unit, accent = false }: { label: string; value
   );
 }
 
-function SeriesLegend({ hasMl }: { hasMl: boolean }) {
+function SeriesLegend() {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[8px] uppercase tracking-widest">
       <span className="inline-flex items-center gap-1 text-emerald-200">
@@ -502,10 +503,6 @@ function SeriesLegend({ hasMl }: { hasMl: boolean }) {
       <span className="inline-flex items-center gap-1 text-cyan-200">
         <span className="h-0.5 w-3" style={{ backgroundColor: FORECAST_COLOR }} />
         {SERIES_LABELS.forecast}
-      </span>
-      <span className={`inline-flex items-center gap-1 ${hasMl ? 'text-purple-200' : 'text-slate-600'}`}>
-        <span className="h-0.5 w-3" style={{ backgroundColor: hasMl ? ML_COLOR : '#475569' }} />
-        {SERIES_LABELS.ml}
       </span>
     </div>
   );
@@ -525,7 +522,7 @@ function ForecastLineChart({
   const config = VARIABLE_CONFIG[variable];
   const Icon = config.icon;
   const rows = useMemo(() => buildChartRows(data, variable), [data, variable]);
-  const hasData = rows.some(row => row.detected !== null || row.forecast !== null || row.ml !== null);
+  const hasData = rows.some(row => row.detected !== null || row.ml !== null);
   const hasMl = rows.some(row => row.ml !== null);
   const domainEnd = rows.length ? Math.max(...rows.map(row => row.t), nowMs) : nowMs;
   const height = expanded ? 226 : 144;
@@ -541,7 +538,7 @@ function ForecastLineChart({
           </div>
         </div>
       </div>
-      <SeriesLegend hasMl={hasMl} />
+      <SeriesLegend />
       <div className="mt-2 w-full" style={{ height }}>
         {hasData ? (
           <ResponsiveContainer width="100%" height={height} minWidth={0} minHeight={height} initialDimension={{ width: 320, height }}>
@@ -587,8 +584,8 @@ function ForecastLineChart({
                 ]}
               />
               <Line name="detected" dataKey="detected" stroke={DETECTED_COLOR} strokeWidth={1.3} strokeDasharray="4 4" dot={false} connectNulls isAnimationActive={false} type="linear" />
-              <Line name="forecast" dataKey="forecast" stroke={FORECAST_COLOR} strokeWidth={1.55} dot={false} connectNulls isAnimationActive={false} type="linear" />
-              {hasMl && <Line name="ml" dataKey="ml" stroke={ML_COLOR} strokeWidth={1.45} dot={false} connectNulls isAnimationActive={false} type="linear" />}
+              {/* Demo: "Forecast" is the ML-corrected series (dataKey="ml"); legacy MRU line removed. */}
+              {hasMl && <Line name="ml" dataKey="ml" stroke={FORECAST_COLOR} strokeWidth={1.55} dot={false} connectNulls isAnimationActive={false} type="linear" />}
             </LineChart>
           </ResponsiveContainer>
         ) : (
