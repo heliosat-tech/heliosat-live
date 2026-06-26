@@ -7,13 +7,18 @@ tsconfig.tsbuildinfo
 data/cache/
 data/checkpoints/
 data/parquet/
-data/ml-model/
+# Ignore the ML-model dir except the small trained artifact the live forecast loads at runtime.
+data/ml-model/*
+!data/ml-model/model.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 data/live-events/
-data/console/
+# Ignore the local console store except the historical archives the heatmaps need at runtime.
+data/console/*
+!data/console/omni-archive.json
+!data/console/ace-archive.json
 
 # University report (sources, generated plots, compiled PDF) — local only
 docs/report/
