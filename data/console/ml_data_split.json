@@ -1,0 +1,184 @@
+{
+  "generatedAtUtc": "2026-06-12T16:52:31+00:00",
+  "model": {
+    "name": "MRU + ML residual correction (HistGradientBoostingRegressor)",
+    "algorithm": "sklearn HistGradientBoostingRegressor (absolute_error loss), ridge baseline",
+    "target": "OMNI propagation delay minus MRU ballistic delay, minutes",
+    "artifact": "data/ml-model/arrival-residual/model.joblib"
+  },
+  "split": {
+    "scheme": "chronological, earliest 70% train / latest 30% validation, no shuffling",
+    "train": {
+      "startUtc": "2021-01-01T00:00:00Z",
+      "endUtc": "2024-10-04T23:10:00Z",
+      "rows": 354622
+    },
+    "validation": {
+      "startUtc": "2024-10-04T23:15:00Z",
+      "endUtc": "2026-04-30T23:55:00Z",
+      "rows": 151981
+    }
+  },
+  "features": [
+    {
+      "name": "speed_km_s",
+      "units": "km/s",
+      "description": "Upstream bulk flow speed at L1"
+    },
+    {
+      "name": "density_p_cc",
+      "units": "1/cc",
+      "description": "Upstream proton density at L1"
+    },
+    {
+      "name": "bmag_nt",
+      "units": "nT",
+      "description": "Upstream field magnitude |B| at L1"
+    },
+    {
+      "name": "bz_gsm_nt",
+      "units": "nT",
+      "description": "Upstream Bz GSM at L1"
+    },
+    {
+      "name": "by_gsm_nt",
+      "units": "nT",
+      "description": "Upstream By GSM at L1"
+    },
+    {
+      "name": "pdyn_npa",
+      "units": "nPa",
+      "description": "Derived dynamic pressure 1.6726e-6 * n * V^2"
+    },
+    {
+      "name": "em_mv_m",
+      "units": "mV/m",
+      "description": "Merging electric field V * max(0, -Bz) * 1e-3, the repo's coupling convention"
+    },
+    {
+      "name": "clock_angle_deg",
+      "units": "deg",
+      "description": "IMF clock angle atan2(|By|, Bz), 0 north to 180 south"
+    },
+    {
+      "name": "sc_x_re",
+      "units": "Re",
+      "description": "Spacecraft GSE X position"
+    },
+    {
+      "name": "sc_y_re",
+      "units": "Re",
+      "description": "Spacecraft GSE Y position (off-axis offset)"
+    },
+    {
+      "name": "sc_z_re",
+      "units": "Re",
+      "description": "Spacecraft GSE Z position (off-axis offset)"
+    },
+    {
+      "name": "sc_ryz_re",
+      "units": "Re",
+      "description": "Off-axis distance sqrt(Y^2 + Z^2)"
+    },
+    {
+      "name": "dist_re",
+      "units": "Re",
+      "description": "Ballistic propagation distance x_sc - BSN_x"
+    },
+    {
+      "name": "mru_delay_min",
+      "units": "min",
+      "description": "The MRU ballistic delay itself (the benchmark's own prediction)"
+    },
+    {
+      "name": "speed_mean_1h_km_s",
+      "units": "km/s",
+      "description": "Trailing 1 h mean of speed"
+    },
+    {
+      "name": "speed_mean_3h_km_s",
+      "units": "km/s",
+      "description": "Trailing 3 h mean of speed"
+    },
+    {
+      "name": "speed_std_3h_km_s",
+      "units": "km/s",
+      "description": "Trailing 3 h standard deviation of speed"
+    },
+    {
+      "name": "bz_mean_1h_nt",
+      "units": "nT",
+      "description": "Trailing 1 h mean of Bz GSM"
+    },
+    {
+      "name": "bz_mean_3h_nt",
+      "units": "nT",
+      "description": "Trailing 3 h mean of Bz GSM"
+    },
+    {
+      "name": "bz_std_3h_nt",
+      "units": "nT",
+      "description": "Trailing 3 h standard deviation of Bz GSM"
+    }
+  ],
+  "datasets": [
+    {
+      "key": "ace",
+      "usedByModel": true,
+      "role": "Training input: the model's features are the upstream L1 measurements (speed, density, field, position) of each paired parcel, as carried in the OMNI high-res record.",
+      "variables": [
+        "speed_km_s",
+        "density_p_cc",
+        "bmag_nt",
+        "bz_gsm_nt",
+        "by_gsm_nt",
+        "pdyn_npa",
+        "em_mv_m",
+        "clock_angle_deg",
+        "sc_x_re",
+        "sc_y_re",
+        "sc_z_re",
+        "sc_ryz_re",
+        "dist_re",
+        "mru_delay_min",
+        "speed_mean_1h_km_s",
+        "speed_mean_3h_km_s",
+        "speed_std_3h_km_s",
+        "bz_mean_1h_nt",
+        "bz_mean_3h_nt",
+        "bz_std_3h_nt"
+      ]
+    },
+    {
+      "key": "omni",
+      "usedByModel": true,
+      "role": "Training target and validation reference: OMNI Timeshift is the observed propagation delay the residual is measured against.",
+      "variables": [
+        "timeshift_s (target side)",
+        "bsn_x_re (benchmark geometry)",
+        "kp (regime labels)"
+      ]
+    },
+    {
+      "key": "geo",
+      "usedByModel": false,
+      "role": "Context only, not used by the arrival-time model.",
+      "variables": []
+    }
+  ],
+  "pairing": {
+    "source": "SPDF high-res OMNI 5-min yearly files (Timeshift vs ballistic delay)",
+    "sourceFiles": [
+      "omni_5min2021.asc",
+      "omni_5min2022.asc",
+      "omni_5min2023.asc",
+      "omni_5min2024.asc",
+      "omni_5min2025.asc",
+      "omni_5min2026.asc"
+    ],
+    "cadence": "5 min",
+    "spanStartUtc": "2021-01-01T00:00:00Z",
+    "spanStopUtc": "2026-05-01T00:00:00Z",
+    "samplesTotal": 506603
+  }
+}

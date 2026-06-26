@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/': ['./data/ml-model/model.json'],
     '/api/console/corridor': ['./data/console/omni-archive.json', './data/console/ace-archive.json'],
+    '/api/console/ml': ['./data/console/ml_metrics.json', './data/console/ml_data_split.json'],
+    '/api/console/validation-data': ['./data/console/arrival.json', './data/console/timing.json', './data/console/ml_data_split.json'],
   },
   webpack: (config, { webpack }) => {
     config.plugins.push(
