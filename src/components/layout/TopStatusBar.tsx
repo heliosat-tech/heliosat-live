@@ -11,6 +11,8 @@ export interface SourceStatus {
   name: string;
   connected: boolean;
   partial?: boolean;
+  /** Connected, but serving a cached/last-good snapshot because the source was unreachable. */
+  stale?: boolean;
   lastUpdated: string | null;
 }
 
@@ -111,8 +113,9 @@ const SourcesMenu: React.FC<{ sources: SourceStatus[]; tzId: string }> = ({ sour
   const { open, setOpen, ref } = useDropdown();
   const connectedCount = sources.filter(source => source.connected).length;
   const anyDown = sources.some(source => !source.connected);
-  const anyPartial = sources.some(source => source.connected && source.partial);
-  const overallDot = anyDown ? 'bg-red-500' : anyPartial ? 'bg-amber-400' : 'bg-cyan-400';
+  // Amber = connected but degraded: a partial feed or a cached/last-good snapshot.
+  const anyAmber = sources.some(source => source.connected && (source.partial || source.stale));
+  const overallDot = anyDown ? 'bg-red-500' : anyAmber ? 'bg-amber-400' : 'bg-cyan-400';
 
   return (
     <div className="relative" ref={ref}>
@@ -122,7 +125,7 @@ const SourcesMenu: React.FC<{ sources: SourceStatus[]; tzId: string }> = ({ sour
         className="flex items-center gap-2 rounded-md border border-slate-700/60 bg-slate-800/30 px-3 py-1.5 text-xs transition-colors hover:border-slate-600"
         aria-expanded={open}
       >
-        <span className={`h-2 w-2 rounded-full ${overallDot} ${!anyDown && !anyPartial ? 'animate-pulse' : ''}`} />
+        <span className={`h-2 w-2 rounded-full ${overallDot} ${!anyDown && !anyAmber ? 'animate-pulse' : ''}`} />
         <span className="text-slate-300">Data sources</span>
         <span className="font-mono text-[10px] text-slate-500">{connectedCount}/{sources.length}</span>
         <ChevronDown className="h-3 w-3 text-slate-500" aria-hidden="true" />
@@ -131,20 +134,26 @@ const SourcesMenu: React.FC<{ sources: SourceStatus[]; tzId: string }> = ({ sour
       {open && (
         <div className="absolute right-0 top-full z-[120] mt-2 w-80 rounded-md border border-slate-700 bg-slate-950 p-1.5 shadow-xl">
           <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-widest text-slate-500">Live data sources · last update</div>
-          {sources.map(source => (
-            <div key={source.name} className="flex items-center justify-between gap-3 rounded px-2 py-1.5">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className={`h-2 w-2 flex-shrink-0 rounded-full ${source.connected ? (source.partial ? 'bg-amber-400' : 'bg-cyan-400') : 'bg-red-500/70'}`} />
-                <span className="truncate text-xs text-slate-200">{source.name}</span>
+          {sources.map(source => {
+            // Amber for a degraded-but-connected feed: partial coverage, or a cached snapshot
+            // served because the source was unreachable.
+            const amber = source.connected && (source.partial || source.stale);
+            const label = !source.connected ? 'Offline' : source.partial ? 'Partial' : source.stale ? 'Cached' : 'Connected';
+            return (
+              <div key={source.name} className="flex items-center justify-between gap-3 rounded px-2 py-1.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className={`h-2 w-2 flex-shrink-0 rounded-full ${source.connected ? (amber ? 'bg-amber-400' : 'bg-cyan-400') : 'bg-red-500/70'}`} />
+                  <span className="truncate text-xs text-slate-200">{source.name}</span>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  <span className={`font-mono text-[10px] ${source.connected ? (amber ? 'text-amber-300' : 'text-slate-400') : 'text-red-400/80'}`}>
+                    {label}
+                  </span>
+                  <span className="w-12 text-right font-mono text-[10px] text-slate-600">{formatUpdated(source.lastUpdated, tzId)}</span>
+                </div>
               </div>
-              <div className="flex flex-shrink-0 items-center gap-2">
-                <span className={`font-mono text-[10px] ${source.connected ? (source.partial ? 'text-amber-300' : 'text-slate-400') : 'text-red-400/80'}`}>
-                  {source.connected ? (source.partial ? 'Partial' : 'Connected') : 'Offline'}
-                </span>
-                <span className="w-12 text-right font-mono text-[10px] text-slate-600">{formatUpdated(source.lastUpdated, tzId)}</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
