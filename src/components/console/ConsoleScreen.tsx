@@ -3180,9 +3180,16 @@ function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail,
   );
 }
 
+// The main /api/console payload, cached at module scope (keyed by cadence) so navigating back
+// into the console paints the last data instantly instead of re-flashing "Reading L1 feed…".
+// Mirrors REPLAY_CACHE: survives remounts, page-session only, never persisted. A background
+// refresh always runs on mount (and every 60s), so what is shown stays live.
+const CONSOLE_CACHE = new Map<ForecastCadence, ConsoleResponse>();
+
 export function ConsoleScreen() {
-  const [data, setData] = useState<ConsoleResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Seed from the cache for the default cadence so re-entry has data immediately (no spinner).
+  const [data, setData] = useState<ConsoleResponse | null>(() => CONSOLE_CACHE.get('1h') ?? null);
+  const [loading, setLoading] = useState(() => !CONSOLE_CACHE.has('1h'));
   const [refreshing, setRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState(0);
   const [chartsOpen, setChartsOpen] = useState(true);
@@ -3208,7 +3215,11 @@ export function ConsoleScreen() {
     if (manual) setRefreshing(true);
     try {
       const response = await fetch(`/api/console?cadence=${cadence}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
-      if (response.ok) setData((await response.json()) as ConsoleResponse);
+      if (response.ok) {
+        const payload = (await response.json()) as ConsoleResponse;
+        CONSOLE_CACHE.set(cadence, payload);
+        setData(payload);
+      }
     } catch {
       /* keep last data */
     } finally {
@@ -3216,6 +3227,15 @@ export function ConsoleScreen() {
       setRefreshing(false);
     }
   }, [cadence]);
+
+  // Switch cadence: show the cached payload for the new cadence instantly (the load effect still
+  // fires a background refresh). Done in the event handler, not an effect, so there's no
+  // cascading-render / spinner flash.
+  const selectCadence = useCallback((next: ForecastCadence) => {
+    setCadence(next);
+    const cached = CONSOLE_CACHE.get(next);
+    if (cached) setData(cached);
+  }, []);
 
   // Chart series live in their own (heavier) endpoint so the 60s status poll stays
   // light and year-scale windows are only fetched when the window changes.
@@ -3359,7 +3379,7 @@ export function ConsoleScreen() {
                   {/* Cadence filter: how densely to show the per-sample forecasts */}
                   <div className="inline-flex overflow-hidden rounded-md border border-slate-700/60" title="How densely to show forecasts">
                     {CADENCE_OPTIONS.map(opt => (
-                      <button key={opt.key} type="button" onClick={() => setCadence(opt.key)}
+                      <button key={opt.key} type="button" onClick={() => selectCadence(opt.key)}
                         className={`border-r border-slate-700/60 px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors last:border-r-0 ${cadence === opt.key ? 'bg-cyan-500/20 text-cyan-200' : 'text-slate-500 hover:text-slate-300'}`}>
                         {opt.label}
                       </button>

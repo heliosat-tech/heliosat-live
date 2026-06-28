@@ -15,10 +15,15 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 data/live-events/
-# Ignore the local console store except the historical archives the heatmaps need at runtime.
+# Ignore the local console store except the precomputed artifacts the app reads at runtime:
+# historical archives (heatmaps) and the offline ML/validation studies the Internal Console shows.
 data/console/*
 !data/console/omni-archive.json
 !data/console/ace-archive.json
+!data/console/ml_metrics.json
+!data/console/ml_data_split.json
+!data/console/arrival.json
+!data/console/timing.json
 
 # University report (sources, generated plots, compiled PDF) — local only
 docs/report/

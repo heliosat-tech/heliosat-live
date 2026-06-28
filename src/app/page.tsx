@@ -15,12 +15,32 @@ import { SatelliteWatchProvider } from '@/contexts/SatelliteWatchContext';
 import { DashboardSync } from '@/components/DashboardSync';
 import { fetchNoaaEphemerisData, fetchNoaaMagnetometerData, fetchNoaaPlasmaData } from '@/services/noaaSolarWindService';
 import { fetchNoaaAlerts } from '@/services/noaaAlertsService';
-import { fetchTleGroup } from '@/services/celestrakService';
+import { fetchTleGroup, type CelesTrakResponse } from '@/services/celestrakService';
 import { buildL1ForecastPanelData } from '@/services/l1ForecastPanelService';
 import { fetchNoaaStormScales } from '@/services/noaaStormScalesService';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+// The home is server-rendered on every navigation (force-dynamic). CelesTrak can be slow or
+// down — its service retries for ~12s — and must not hold the whole dashboard render hostage.
+// Cap the initial TLE fetch: if it overruns, render with an empty catalog and let the globe
+// hydrate from /api/tle client-side. The in-flight fetchTleGroup keeps running and populates
+// celestrakService's own cache, so the next render is warm.
+const TLE_RENDER_BUDGET_MS = 3_000;
+async function fetchTleForRender(): Promise<CelesTrakResponse> {
+  const fallback: CelesTrakResponse = {
+    isConnected: false,
+    lastUpdated: null,
+    errorMessage: 'CelesTrak slow — loading in background',
+    tles: [],
+    stale: false,
+  };
+  return Promise.race([
+    fetchTleGroup('stations'),
+    new Promise<CelesTrakResponse>(resolve => setTimeout(() => resolve(fallback), TLE_RENDER_BUDGET_MS)),
+  ]);
+}
 
 export default async function Home() {
   const [noaaMagData, noaaPlasmaData, noaaEphemerisData, noaaAlertsData, celestrakData, l1ForecastData, stormScalesData] = await Promise.all([
@@ -28,7 +48,7 @@ export default async function Home() {
     fetchNoaaPlasmaData(),
     fetchNoaaEphemerisData(),
     fetchNoaaAlerts(),
-    fetchTleGroup('stations'),
+    fetchTleForRender(),
     buildL1ForecastPanelData(),
     fetchNoaaStormScales(),
   ]);

@@ -54,7 +54,9 @@ export const SatelliteConfigProvider: React.FC<ProviderProps> = ({ children, ini
   const [orbitPropagationEnabled, setOrbitPropagationEnabled] = useState(false);
   const [tleData, setTleData] = useState<CelesTrakResponse>(initialTleData);
   const [trackedTles, setTrackedTles] = useState<SatelliteTLE[]>([]);
-  const [tleLoading, setTleLoading] = useState(false);
+  // Start in "loading" when the server handed us an empty catalog (its TLE fetch was time-capped);
+  // the mount effect below then fetches it client-side. Deterministic from props, so SSR/CSR agree.
+  const [tleLoading, setTleLoading] = useState(initialTleData.tles.length === 0);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const openModal = useCallback(() => setIsModalOpen(true), []);
@@ -67,11 +69,13 @@ export const SatelliteConfigProvider: React.FC<ProviderProps> = ({ children, ini
     setTleLoading(!(nextGroup === 'stations' && tleData === initialTleData));
   }, [group, initialTleData, tleData]);
 
-  // Re-fetch when group changes (skip initial stations load — already server-fetched).
-  // Goes through our same-origin /api/tle proxy, which adds retry + last-good-cache resilience
-  // server-side; the 15s ceiling covers the worst-case server retry without hanging forever.
+  // Re-fetch when group changes. Goes through our same-origin /api/tle proxy, which adds retry +
+  // last-good-cache resilience server-side; the 15s ceiling covers the worst-case server retry
+  // without hanging forever. We skip ONLY when the server already provided the stations catalog;
+  // if it came back empty (its server-render fetch was time-capped) we load it here so the globe
+  // still heals without blocking the page render.
   useEffect(() => {
-    if (group === 'stations' && tleData === initialTleData) return;
+    if (group === 'stations' && tleData === initialTleData && initialTleData.tles.length > 0) return;
     let cancelled = false;
     fetch(`/api/tle?group=${group}`, { signal: AbortSignal.timeout(15_000) })
       .then(r => { if (!r.ok) throw new Error(); return r.json() as Promise<CelesTrakResponse>; })

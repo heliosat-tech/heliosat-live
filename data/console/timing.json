@@ -1,0 +1,95 @@
+{
+  "samples": 156441,
+  "windowsUsed": 13,
+  "mruLagMeanMin": 44.7,
+  "actualLagMeanMin": 45.2,
+  "biasMin": -0.43,
+  "maeMin": 9.16,
+  "medianAbsMin": 5.14,
+  "rmseMin": 14.59,
+  "stdMin": 14.58,
+  "p90AbsMin": 22.51,
+  "maxAbsMin": 118.2,
+  "withinMinPct": {
+    "5": 49.1,
+    "10": 70.2,
+    "20": 87.7
+  },
+  "histogram": [
+    {
+      "from": -70,
+      "to": -60,
+      "count": 622
+    },
+    {
+      "from": -60,
+      "to": -50,
+      "count": 560
+    },
+    {
+      "from": -50,
+      "to": -40,
+      "count": 1076
+    },
+    {
+      "from": -40,
+      "to": -30,
+      "count": 2243
+    },
+    {
+      "from": -30,
+      "to": -20,
+      "count": 6200
+    },
+    {
+      "from": -20,
+      "to": -10,
+      "count": 14958
+    },
+    {
+      "from": -10,
+      "to": 0,
+      "count": 51511
+    },
+    {
+      "from": 0,
+      "to": 10,
+      "count": 58281
+    },
+    {
+      "from": 10,
+      "to": 20,
+      "count": 12441
+    },
+    {
+      "from": 20,
+      "to": 30,
+      "count": 4128
+    },
+    {
+      "from": 30,
+      "to": 40,
+      "count": 2081
+    },
+    {
+      "from": 40,
+      "to": 50,
+      "count": 1166
+    },
+    {
+      "from": 50,
+      "to": 60,
+      "count": 572
+    },
+    {
+      "from": 60,
+      "to": 70,
+      "count": 602
+    }
+  ],
+  "coverage": {
+    "startUtc": "1981-01-01T00:00:00.000Z",
+    "stopUtc": "2026-05-14T01:51:00.000Z"
+  },
+  "computedAtUtc": "2026-06-01T22:21:20.385Z"
+}
