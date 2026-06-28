@@ -19,6 +19,14 @@ function round(value: number, digits = 1) {
   return Math.round(value * scale) / scale;
 }
 
+// Short in-memory cache of the assembled response, keyed by cadence. The console polls every
+// 60s and re-mounts on every navigation; without this each call re-runs 3 upstream fetches
+// (SWPC up to 12s) plus a Python ML subprocess. A 15s TTL keeps data live (NOAA RTSW updates
+// ~1/min) while making navigations and the background refresh near-free. Per-process (per
+// lambda in serverless); the admin gate still runs on every request before any cache hit.
+const RESPONSE_TTL_MS = 15_000;
+const responseCache = new Map<string, { body: Record<string, unknown>; expiresAtMs: number }>();
+
 /**
  * Internal Console status: the live MRU forecast (when L1 wind reaches Earth + how
  * dangerous it is on the NOAA G scale), the observed NOAA G/S/R, and a continuous
@@ -32,6 +40,11 @@ export async function GET(request: Request) {
   }
 
   const cadence = normalizeCadence(new URL(request.url).searchParams.get('cadence'));
+
+  const cached = responseCache.get(cadence);
+  if (cached && Date.now() < cached.expiresAtMs) {
+    return NextResponse.json(cached.body, { headers: { 'Cache-Control': 'no-store' } });
+  }
 
   const [history, kpSeries, scales] = await Promise.all([
     fetchLiveL1History(),
@@ -281,8 +294,7 @@ export async function GET(request: Request) {
   // thinned to the requested cadence.
   const log = buildForecastLog(history, kpSeries, cadence);
 
-  return NextResponse.json(
-    {
+  const body = {
       generatedAtUtc: new Date(nowMs).toISOString(),
       current,
       inbound,
@@ -307,7 +319,8 @@ export async function GET(request: Request) {
       },
       feedDegraded: history.samples.length === 0 || !!history.errorMessage || history.freshness !== 'fresh',
       warnings: [history.errorMessage, scales.errorMessage].filter(Boolean),
-    },
-    { headers: { 'Cache-Control': 'no-store' } },
-  );
+  };
+
+  responseCache.set(cadence, { body, expiresAtMs: Date.now() + RESPONSE_TTL_MS });
+  return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }
