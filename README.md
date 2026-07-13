@@ -4,6 +4,8 @@
 
 A real-time aerospace telemetry dashboard for monitoring live space weather and satellite positions. Every value shown is sourced directly from live external APIs or computed via physics-based algorithms from real orbital data. If a source is unavailable, the dashboard displays "Unavailable" or "Not available" — it never fills gaps with synthetic values.
 
+This statement describes the public dashboard. The authenticated Internal Console now also contains a clearly separated, versioned **experimental** LEO density/drag research module. Its retrospective observations, experimental point forecasts, explicit persistence assumptions and generic drag scenarios are labelled as different evidence classes and are never exposed as public operational data.
+
 ---
 
 ## Data Sources
@@ -92,6 +94,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+Authenticated administrators can open `/console`. LEO research setup, official data ingestion and exact reproduction commands are documented in [`docs/LEO_REPRODUCIBILITY.md`](docs/LEO_REPRODUCIBILITY.md); scientific boundaries and licensing are in [`docs/LEO_DENSITY_DRAG_METHODOLOGY.md`](docs/LEO_DENSITY_DRAG_METHODOLOGY.md) and [`docs/LEO_DATA_SOURCES_AND_LICENSES.md`](docs/LEO_DATA_SOURCES_AND_LICENSES.md). The staged 2021–2025 evidence and delivery audit are recorded in [`docs/LEO_MULTIYEAR_MODEL_CARD.md`](docs/LEO_MULTIYEAR_MODEL_CARD.md) and [`docs/LEO_MULTIYEAR_IMPLEMENTATION_REPORT.md`](docs/LEO_MULTIYEAR_IMPLEMENTATION_REPORT.md).
 
 ### Build (production)
 

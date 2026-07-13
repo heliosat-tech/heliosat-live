@@ -25,6 +25,8 @@ import pandas as pd
 
 # Proton-only dynamic pressure, nPa: Pdyn = 1.6726e-6 * n[/cc] * V[km/s]^2.
 PDYN_COEF = 1.6726e-6
+NOMINAL_BOW_SHOCK_X_RE = 13.5
+FEATURE_SCHEMA_VERSION = "arrival-residual-features-v2-nominal-bow-shock"
 
 # (name, units, description) for documentation artifacts. Single source of truth.
 FEATURES: list[tuple[str, str, str]] = [
@@ -40,7 +42,7 @@ FEATURES: list[tuple[str, str, str]] = [
     ("sc_y_re", "Re", "Spacecraft GSE Y position (off-axis offset)"),
     ("sc_z_re", "Re", "Spacecraft GSE Z position (off-axis offset)"),
     ("sc_ryz_re", "Re", "Off-axis distance sqrt(Y^2 + Z^2)"),
-    ("dist_re", "Re", "Ballistic propagation distance x_sc - BSN_x"),
+    ("dist_re", "Re", "Causal ballistic distance x_sc - nominal bow-shock nose (13.5 Re)"),
     ("mru_delay_min", "min", "The MRU ballistic delay itself (the benchmark's own prediction)"),
     ("speed_mean_1h_km_s", "km/s", "Trailing 1 h mean of speed"),
     ("speed_mean_3h_km_s", "km/s", "Trailing 3 h mean of speed"),
@@ -79,17 +81,27 @@ def build_features(frame: pd.DataFrame) -> pd.DataFrame:
         np.arctan2(out["by_gsm_nt"].abs(), out["bz_gsm_nt"])
     )
     out["sc_ryz_re"] = np.hypot(out["sc_y_re"], out["sc_z_re"])
-    out["dist_re"] = out["sc_x_re"] - out["bsn_x_re"]
+    benchmark_bsn = (
+        pd.to_numeric(out["benchmark_bsn_x_re"], errors="coerce")
+        if "benchmark_bsn_x_re" in out
+        else pd.Series(NOMINAL_BOW_SHOCK_X_RE, index=out.index, dtype=float)
+    )
+    out["dist_re"] = out["sc_x_re"] - benchmark_bsn
 
-    rolled = out.set_index("time").sort_index()
+    order = out.sort_values("time", kind="mergesort").index
+    rolled = out.loc[order].set_index("time")
     speed = rolled["speed_km_s"]
     bz = rolled["bz_gsm_nt"]
-    out["speed_mean_1h_km_s"] = speed.rolling("1h", min_periods=3).mean().to_numpy()
-    out["speed_mean_3h_km_s"] = speed.rolling("3h", min_periods=6).mean().to_numpy()
-    out["speed_std_3h_km_s"] = speed.rolling("3h", min_periods=6).std().to_numpy()
-    out["bz_mean_1h_nt"] = bz.rolling("1h", min_periods=3).mean().to_numpy()
-    out["bz_mean_3h_nt"] = bz.rolling("3h", min_periods=6).mean().to_numpy()
-    out["bz_std_3h_nt"] = bz.rolling("3h", min_periods=6).std().to_numpy()
+
+    def restore(values: pd.Series) -> pd.Series:
+        return pd.Series(values.to_numpy(), index=order).reindex(out.index)
+
+    out["speed_mean_1h_km_s"] = restore(speed.rolling("1h", min_periods=3).mean())
+    out["speed_mean_3h_km_s"] = restore(speed.rolling("3h", min_periods=6).mean())
+    out["speed_std_3h_km_s"] = restore(speed.rolling("3h", min_periods=6).std())
+    out["bz_mean_1h_nt"] = restore(bz.rolling("1h", min_periods=3).mean())
+    out["bz_mean_3h_nt"] = restore(bz.rolling("3h", min_periods=6).mean())
+    out["bz_std_3h_nt"] = restore(bz.rolling("3h", min_periods=6).std())
     return out
 
 

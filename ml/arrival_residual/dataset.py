@@ -46,6 +46,7 @@ KP_ARCHIVE_PATH = PROJECT_ROOT / "data" / "console" / "omni-archive.json"
 
 SPDF_BASE = "https://spdf.gsfc.nasa.gov/pub/data/omni/high_res_omni"
 RE_KM = 6371.2
+NOMINAL_BOW_SHOCK_X_RE = 13.5
 
 # Same span as the existing multi-year arrival study (STATS_SPAN).
 SPAN_START = "2021-01-01T00:00:00Z"
@@ -155,7 +156,12 @@ def _load_kp_series() -> pd.DataFrame | None:
     if not records:
         return None
     kp = pd.DataFrame(records, columns=["ms", "kp"])
-    kp["time"] = pd.to_datetime(kp["ms"], unit="ms", utc=True)
+    # pandas 3 preserves the input unit in timezone-aware datetime dtypes.
+    # ``merge_asof`` requires both keys to have the exact same precision, so
+    # normalise the archive timestamps to the canonical nanosecond UTC dtype.
+    kp["time"] = pd.to_datetime(kp["ms"], unit="ms", utc=True).astype(
+        "datetime64[ns, UTC]"
+    )
     return kp[["time", "kp"]].sort_values("time").reset_index(drop=True)
 
 
@@ -182,6 +188,9 @@ def build_paired_record(refresh_downloads: bool = False) -> PairedRecord:
         source_files.append(path.name)
         frames.append(_parse_year_file(path))
     frame = pd.concat(frames, ignore_index=True)
+    frame["time"] = pd.to_datetime(frame["time"], utc=True).astype(
+        "datetime64[ns, UTC]"
+    )
     frame = frame[(frame["time"] >= start) & (frame["time"] < stop)].copy()
 
     # --- Target-side validity: identical to the existing study's filters. ---
@@ -200,7 +209,17 @@ def build_paired_record(refresh_downloads: bool = False) -> PairedRecord:
         frame.loc[frame[column].abs() >= limit, column] = np.nan
 
     # --- Benchmark, target and warning lead, exactly as the study defines. ---
-    mru_delay_min = (frame["sc_x_re"] - frame["bsn_x_re"]) * RE_KM / frame["speed_km_s"] / 60.0
+    # The deployable benchmark cannot use OMNI's retrospective BSN_x.  Keep
+    # that column only as target/reference lineage and use the same nominal
+    # bow-shock geometry as the live HelioSat MRU implementation.
+    frame["reference_bsn_x_re"] = frame["bsn_x_re"]
+    frame["benchmark_bsn_x_re"] = NOMINAL_BOW_SHOCK_X_RE
+    mru_delay_min = (
+        (frame["sc_x_re"] - frame["benchmark_bsn_x_re"])
+        * RE_KM
+        / frame["speed_km_s"]
+        / 60.0
+    )
     frame["mru_delay_min"] = mru_delay_min
     frame["lead_min"] = frame["timeshift_s"] / 60.0
     frame["target_resid_min"] = frame["timeshift_s"] / 60.0 - mru_delay_min
@@ -224,12 +243,17 @@ def build_paired_record(refresh_downloads: bool = False) -> PairedRecord:
         )
         frame["kp"] = merged["kp_lookup"].to_numpy()
         rows_without_kp = int(frame["kp"].isna().sum())
-        # Gap -> quiet, the same convention as the study's gAt().
-        frame["g_level"] = _g_level_from_kp(frame["kp"].fillna(0.0))
+        levels = _g_level_from_kp(frame["kp"].fillna(0.0)).astype("Int64")
+        levels.loc[frame["kp"].isna()] = pd.NA
+        frame["g_level"] = levels
 
     frame["regime"] = np.select(
-        [frame["g_level"] >= 3, frame["g_level"] >= 1],
-        ["severe", "storm"],
+        [
+            frame["g_level"].isna().to_numpy(bool),
+            frame["g_level"].ge(3).fillna(False).to_numpy(bool),
+            frame["g_level"].ge(1).fillna(False).to_numpy(bool),
+        ],
+        ["unavailable", "severe", "storm"],
         default="quiet",
     )
 
