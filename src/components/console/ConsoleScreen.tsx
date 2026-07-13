@@ -4,8 +4,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import Link from 'next/link';
 import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, GitCompareArrows, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, RefreshCw, Scale, Timer, Wind } from 'lucide-react';
 import { TrainingDataPanel } from './TrainingDataPanel';
+import { ConsoleSectionTabs } from './ConsoleSectionTabs';
+import { LeoArchivePanel } from './leo/LeoArchivePanel';
+import { LeoRealtimePanel } from './leo/LeoRealtimePanel';
+import { LeoValidationPanel } from './leo/LeoValidationPanel';
 import { Area, AreaChart, Brush, CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { classifyGFromKp, kpFromCoupling } from '@/services/stormScaleService';
+import { createDefaultConsoleSectionDomains, type ConsoleSectionDomain, type ConsoleSectionId } from '@/lib/leo/navigation';
 
 // ---- Server payload (mirror of /api/console) ----
 interface DangerDto { level: number; code: string; label: string; estKp: number | null; fraction: number }
@@ -3091,8 +3096,9 @@ function SidebarNav({ view, onView }: { view: ConsoleView; onView: (v: ConsoleVi
   );
 }
 
-function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail, onToggleSeries, sampleTimeUtc, lastSampleAgeMin, displayTimeZone, feedDegraded, liveSourceLabel, liveSourceConsidered }: {
+function ConsoleSidebar({ view, domain, onView, scales, forecastG, visible, seriesAvail, onToggleSeries, sampleTimeUtc, lastSampleAgeMin, displayTimeZone, feedDegraded, liveSourceLabel, liveSourceConsidered }: {
   view: ConsoleView;
+  domain: ConsoleSectionDomain;
   onView: (v: ConsoleView) => void;
   scales: ScalesDto | null;
   forecastG: DangerDto | null;
@@ -3113,7 +3119,23 @@ function ConsoleSidebar({ view, onView, scales, forecastG, visible, seriesAvail,
   return (
     <aside className="flex w-full flex-col gap-3 self-start lg:sticky lg:top-0 lg:w-72 lg:shrink-0">
       <SidebarNav view={view} onView={onView} />
-      {view === 'training' ? (
+      {domain === 'leo' ? (
+        <SidebarGroup icon={view === 'realtime' ? Gauge : view === 'training' ? Layers : Timer} title={view === 'realtime' ? 'LEO density & drag' : view === 'training' ? 'Thermosphere archive' : 'LEO validation'}>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            {view === 'realtime'
+              ? 'Experimental density and first-order drag context along a real TLE trajectory. Forecast and scenario outputs remain distinct.'
+              : view === 'training'
+                ? 'Official Swarm and GRACE-FO density products, local processing coverage, quality status and lineage.'
+                : 'Held-out density studies with reference-aligned and HelioSat-predicted-arrival results reported separately.'}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1 font-mono text-[8px] uppercase tracking-widest text-slate-500">
+            <span className="rounded border border-sky-400/20 px-1.5 py-0.5">observed</span>
+            <span className="rounded border border-violet-400/20 px-1.5 py-0.5">retrospective</span>
+            <span className="rounded border border-cyan-400/20 px-1.5 py-0.5">experimental</span>
+            <span className="rounded border border-amber-400/20 px-1.5 py-0.5">scenario</span>
+          </div>
+        </SidebarGroup>
+      ) : view === 'training' ? (
         <SidebarGroup icon={Layers} title="Data Archive">
           <p className="text-[11px] leading-relaxed text-slate-400">All locally-downloaded historical data, classified by orbit (L1 / GEO / LEO / MEO) and mission, with the dates each package covers.</p>
         </SidebarGroup>
@@ -3198,6 +3220,9 @@ export function ConsoleScreen() {
   const [cadence, setCadence] = useState<ForecastCadence>('1h');
   // Left-rail tab: real-time forecast vs training-data inventory vs validation studies.
   const [view, setView] = useState<ConsoleView>('realtime');
+  // Independent section-level domains; every section intentionally defaults to the
+  // existing L1 surface so opening the console is a regression-safe operation.
+  const [sectionDomains, setSectionDomains] = useState(createDefaultConsoleSectionDomains);
   const [series, setSeries] = useState<SeriesDto | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   // Chart-series visibility — owned here so the sidebar's "Show on charts" control and
@@ -3209,7 +3234,12 @@ export function ConsoleScreen() {
   const [customZone, setCustomZone] = useState('Europe/Madrid');
   const displayTimeZone = activeClock === 'utc' ? 'UTC' : customZone;
   const displayLabel = activeClock === 'utc' ? 'UTC' : (CONSOLE_ZONES.find(z => z.tz === customZone)?.city ?? customZone);
-  const chartsActive = chartsOpen && view === 'realtime';
+  const sectionId: ConsoleSectionId = view === 'training' ? 'archive' : view;
+  const activeDomain = sectionDomains[sectionId];
+  const selectDomain = useCallback((domain: ConsoleSectionDomain) => {
+    setSectionDomains(current => ({ ...current, [sectionId]: domain }));
+  }, [sectionId]);
+  const chartsActive = chartsOpen && view === 'realtime' && activeDomain === 'l1';
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -3252,11 +3282,17 @@ export function ConsoleScreen() {
   }, []);
 
   useEffect(() => {
-    const initial = window.setTimeout(() => { setNowMs(Date.now()); void load(); }, 0);
+    const initial = activeDomain === 'l1'
+      ? window.setTimeout(() => { setNowMs(Date.now()); void load(); }, 0)
+      : null;
     const clock = window.setInterval(() => setNowMs(Date.now()), 1000);
-    const poll = window.setInterval(() => void load(), 60_000);
-    return () => { window.clearTimeout(initial); window.clearInterval(clock); window.clearInterval(poll); };
-  }, [load]);
+    const poll = activeDomain === 'l1' ? window.setInterval(() => void load(), 60_000) : null;
+    return () => {
+      if (initial !== null) window.clearTimeout(initial);
+      window.clearInterval(clock);
+      if (poll !== null) window.clearInterval(poll);
+    };
+  }, [activeDomain, load]);
 
   // Fetch series on window change / when charts open; live windows also auto-refresh.
   // Only while the real-time tab is showing the Live charts (skip on training/validation).
@@ -3297,14 +3333,14 @@ export function ConsoleScreen() {
           </Link>
           <div>
             <h1 className="text-lg font-semibold text-slate-100">Internal Console</h1>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">L1 → Earth · MRU + ML · live danger</p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{activeDomain === 'leo' ? 'bow shock → thermosphere → LEO drag · research' : 'L1 → Earth · MRU + ML · live danger'}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <HeaderClocks nowMs={nowMs} activeClock={activeClock} onSelectClock={setActiveClock} customZone={customZone} onChangeCustomZone={setCustomZone} />
-          <button type="button" onClick={() => void load(true)} disabled={refreshing} className="flex h-10 items-center gap-2 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-3 text-sm text-cyan-100 transition hover:border-cyan-300/60 disabled:cursor-wait disabled:text-slate-500">
+          {activeDomain === 'l1' && <button type="button" onClick={() => void load(true)} disabled={refreshing} className="flex h-10 items-center gap-2 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-3 text-sm text-cyan-100 transition hover:border-cyan-300/60 disabled:cursor-wait disabled:text-slate-500">
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} aria-hidden="true" /> Refresh
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -3315,6 +3351,7 @@ export function ConsoleScreen() {
           {/* Left control rail: nav + scales, chart-series visibility, live-feed status */}
           <ConsoleSidebar
             view={view}
+            domain={activeDomain}
             onView={setView}
             scales={data?.scales ?? null}
             forecastG={data?.current?.danger ?? null}
@@ -3331,7 +3368,10 @@ export function ConsoleScreen() {
 
           {/* Main body */}
           <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {view === 'training' ? <TrainingDataPanel /> : view === 'validation' ? (
+            <ConsoleSectionTabs section={sectionId} value={activeDomain} onChange={selectDomain} />
+            {activeDomain === 'leo' ? (
+              view === 'realtime' ? <LeoRealtimePanel /> : view === 'training' ? <LeoArchivePanel /> : <LeoValidationPanel />
+            ) : view === 'training' ? <TrainingDataPanel /> : view === 'validation' ? (
             /* Validation studies: benchmark-vs-ML headline, regime table, then context panels */
             <ValidationStudiesView />
             ) : (<>

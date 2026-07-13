@@ -7,6 +7,15 @@ tsconfig.tsbuildinfo
 data/cache/
 data/checkpoints/
 data/parquet/
+# Scientific source data and generated LEO artifacts are local-only. Keep the
+# directory sentinels, but never allow raw mission data or model runs into Git.
+data/raw/**
+!data/raw/.gitkeep
+data/processed/**
+!data/processed/.gitkeep
+data/model-runs/**
+__pycache__/
+*.py[cod]
 # Ignore the ML-model dir except the small trained artifact the live forecast loads at runtime.
 data/ml-model/*
 !data/ml-model/model.json

@@ -1,0 +1,1672 @@
+{
+  "analysis_cadence": "5min",
+  "collections": [
+    "SW_OPER_DNSAPOD_2_",
+    "SW_OPER_DNSBPOD_2_",
+    "SW_OPER_DNSCPOD_2_",
+    "GF_OPER_DNS1ACC_2_"
+  ],
+  "coverage_summary": {
+    "download_duration_days": 588.375,
+    "effective_observation_days": 616,
+    "moderate_storms": 46,
+    "quiet_intervals": 20,
+    "severe_storms": 23,
+    "spacecraft_count": 4
+  },
+  "download_ranges": [
+    {
+      "duration_days": 19.75,
+      "interval_ids": [
+        "quiet-2021-mam-20210428",
+        "severe-2021-20210512T1200"
+      ],
+      "start_utc": "2021-04-28T00:00:00Z",
+      "stop_utc": "2021-05-17T18:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2021-jja-20210811"
+      ],
+      "start_utc": "2021-08-11T00:00:00Z",
+      "stop_utc": "2021-08-25T00:00:00Z"
+    },
+    {
+      "duration_days": 19.875,
+      "interval_ids": [
+        "moderate-2021-20211012T0300",
+        "moderate-2021-20211012T0900",
+        "quiet-2021-son-20211016"
+      ],
+      "start_utc": "2021-10-10T03:00:00Z",
+      "stop_utc": "2021-10-30T00:00:00Z"
+    },
+    {
+      "duration_days": 7.625,
+      "interval_ids": [
+        "moderate-2021-20211103T2100",
+        "severe-2021-20211104T0600"
+      ],
+      "start_utc": "2021-11-01T21:00:00Z",
+      "stop_utc": "2021-11-09T12:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2021-djf-20211205"
+      ],
+      "start_utc": "2021-12-05T00:00:00Z",
+      "stop_utc": "2021-12-19T00:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2022-djf-20220120"
+      ],
+      "start_utc": "2022-01-20T00:00:00Z",
+      "stop_utc": "2022-02-03T00:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2022-20220313T2100"
+      ],
+      "start_utc": "2022-03-11T21:00:00Z",
+      "stop_utc": "2022-03-19T00:00:00Z"
+    },
+    {
+      "duration_days": 11.625,
+      "interval_ids": [
+        "moderate-2022-20220410T0300",
+        "moderate-2022-20220414T1500"
+      ],
+      "start_utc": "2022-04-08T03:00:00Z",
+      "stop_utc": "2022-04-19T18:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2022-mam-20220501"
+      ],
+      "start_utc": "2022-05-01T00:00:00Z",
+      "stop_utc": "2022-05-15T00:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2022-jja-20220724"
+      ],
+      "start_utc": "2022-07-24T00:00:00Z",
+      "stop_utc": "2022-08-07T00:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2022-20220817T1800"
+      ],
+      "start_utc": "2022-08-15T18:00:00Z",
+      "stop_utc": "2022-08-22T21:00:00Z"
+    },
+    {
+      "duration_days": 7.5,
+      "interval_ids": [
+        "moderate-2022-20220904T0600",
+        "moderate-2022-20220904T1500"
+      ],
+      "start_utc": "2022-09-02T06:00:00Z",
+      "stop_utc": "2022-09-09T18:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2022-son-20221110"
+      ],
+      "start_utc": "2022-11-10T00:00:00Z",
+      "stop_utc": "2022-11-24T00:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2023-djf-20230123"
+      ],
+      "start_utc": "2023-01-23T00:00:00Z",
+      "stop_utc": "2023-02-06T00:00:00Z"
+    },
+    {
+      "duration_days": 7.875,
+      "interval_ids": [
+        "moderate-2023-20230227T0300"
+      ],
+      "start_utc": "2023-02-25T03:00:00Z",
+      "stop_utc": "2023-03-05T00:00:00Z"
+    },
+    {
+      "duration_days": 7.875,
+      "interval_ids": [
+        "moderate-2023-20230323T1200",
+        "severe-2023-20230323T1800"
+      ],
+      "start_utc": "2023-03-21T12:00:00Z",
+      "stop_utc": "2023-03-29T09:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2023-mam-20230404"
+      ],
+      "start_utc": "2023-04-04T00:00:00Z",
+      "stop_utc": "2023-04-18T00:00:00Z"
+    },
+    {
+      "duration_days": 7.625,
+      "interval_ids": [
+        "severe-2023-20230423T1800"
+      ],
+      "start_utc": "2023-04-21T18:00:00Z",
+      "stop_utc": "2023-04-29T09:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2023-20230506T0300"
+      ],
+      "start_utc": "2023-05-04T03:00:00Z",
+      "stop_utc": "2023-05-11T06:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2023-20230616T0300"
+      ],
+      "start_utc": "2023-06-14T03:00:00Z",
+      "stop_utc": "2023-06-21T06:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2023-20230805T0300"
+      ],
+      "start_utc": "2023-08-03T03:00:00Z",
+      "stop_utc": "2023-08-10T06:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2023-jja-20230811"
+      ],
+      "start_utc": "2023-08-11T00:00:00Z",
+      "stop_utc": "2023-08-25T00:00:00Z"
+    },
+    {
+      "duration_days": 7.5,
+      "interval_ids": [
+        "moderate-2023-20230919T0300",
+        "moderate-2023-20230919T1200"
+      ],
+      "start_utc": "2023-09-17T03:00:00Z",
+      "stop_utc": "2023-09-24T15:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2023-son-20231007"
+      ],
+      "start_utc": "2023-10-07T00:00:00Z",
+      "stop_utc": "2023-10-21T00:00:00Z"
+    },
+    {
+      "duration_days": 7.375,
+      "interval_ids": [
+        "severe-2023-20231105T1200"
+      ],
+      "start_utc": "2023-11-03T12:00:00Z",
+      "stop_utc": "2023-11-10T21:00:00Z"
+    },
+    {
+      "duration_days": 12.875,
+      "interval_ids": [
+        "moderate-2023-20231125T1800",
+        "moderate-2023-20231201T0900"
+      ],
+      "start_utc": "2023-11-23T18:00:00Z",
+      "stop_utc": "2023-12-06T15:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2024-djf-20240104"
+      ],
+      "start_utc": "2024-01-04T00:00:00Z",
+      "stop_utc": "2024-01-18T00:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2024-20240303T1800"
+      ],
+      "start_utc": "2024-03-01T18:00:00Z",
+      "stop_utc": "2024-03-08T21:00:00Z"
+    },
+    {
+      "duration_days": 7.375,
+      "interval_ids": [
+        "severe-2024-20240324T1200"
+      ],
+      "start_utc": "2024-03-22T12:00:00Z",
+      "stop_utc": "2024-03-29T21:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2024-mam-20240402"
+      ],
+      "start_utc": "2024-04-02T00:00:00Z",
+      "stop_utc": "2024-04-16T00:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "severe-2024-20240419T1800"
+      ],
+      "start_utc": "2024-04-17T18:00:00Z",
+      "stop_utc": "2024-04-24T21:00:00Z"
+    },
+    {
+      "duration_days": 7.25,
+      "interval_ids": [
+        "moderate-2024-20240502T1500"
+      ],
+      "start_utc": "2024-04-30T15:00:00Z",
+      "stop_utc": "2024-05-07T21:00:00Z"
+    },
+    {
+      "duration_days": 14.25,
+      "interval_ids": [
+        "severe-2024-20240510T1500",
+        "moderate-2024-20240512T2100",
+        "moderate-2024-20240513T0300",
+        "moderate-2024-20240516T0600",
+        "moderate-2024-20240517T1800"
+      ],
+      "start_utc": "2024-05-08T15:00:00Z",
+      "stop_utc": "2024-05-22T21:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2024-20240607T1200"
+      ],
+      "start_utc": "2024-06-05T12:00:00Z",
+      "stop_utc": "2024-06-12T15:00:00Z"
+    },
+    {
+      "duration_days": 7.25,
+      "interval_ids": [
+        "severe-2024-20240628T0900"
+      ],
+      "start_utc": "2024-06-26T09:00:00Z",
+      "stop_utc": "2024-07-03T15:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2024-jja-20240710"
+      ],
+      "start_utc": "2024-07-10T00:00:00Z",
+      "stop_utc": "2024-07-24T00:00:00Z"
+    },
+    {
+      "duration_days": 7.25,
+      "interval_ids": [
+        "severe-2024-20240804T1200"
+      ],
+      "start_utc": "2024-08-02T12:00:00Z",
+      "stop_utc": "2024-08-09T18:00:00Z"
+    },
+    {
+      "duration_days": 12.75,
+      "interval_ids": [
+        "severe-2024-20240812T0000",
+        "moderate-2024-20240812T2100",
+        "moderate-2024-20240817T1500"
+      ],
+      "start_utc": "2024-08-10T00:00:00Z",
+      "stop_utc": "2024-08-22T18:00:00Z"
+    },
+    {
+      "duration_days": 12.125,
+      "interval_ids": [
+        "severe-2024-20240912T0900",
+        "moderate-2024-20240913T2100",
+        "severe-2024-20240917T0000",
+        "moderate-2024-20240917T0900"
+      ],
+      "start_utc": "2024-09-10T09:00:00Z",
+      "stop_utc": "2024-09-22T12:00:00Z"
+    },
+    {
+      "duration_days": 10.875,
+      "interval_ids": [
+        "moderate-2024-20241007T1800",
+        "severe-2024-20241008T0000",
+        "severe-2024-20241010T1500"
+      ],
+      "start_utc": "2024-10-05T18:00:00Z",
+      "stop_utc": "2024-10-16T15:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2024-son-20241116"
+      ],
+      "start_utc": "2024-11-16T00:00:00Z",
+      "stop_utc": "2024-11-30T00:00:00Z"
+    },
+    {
+      "duration_days": 20.625,
+      "interval_ids": [
+        "severe-2025-20250101T0900",
+        "quiet-2025-djf-20250106"
+      ],
+      "start_utc": "2024-12-30T09:00:00Z",
+      "stop_utc": "2025-01-20T00:00:00Z"
+    },
+    {
+      "duration_days": 8.0,
+      "interval_ids": [
+        "moderate-2025-20250415T2100",
+        "severe-2025-20250416T1200"
+      ],
+      "start_utc": "2025-04-13T21:00:00Z",
+      "stop_utc": "2025-04-21T21:00:00Z"
+    },
+    {
+      "duration_days": 7.0,
+      "interval_ids": [
+        "quiet-2025-mam-20250423"
+      ],
+      "start_utc": "2025-04-23T00:00:00Z",
+      "stop_utc": "2025-04-30T00:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2025-20250517T0000"
+      ],
+      "start_utc": "2025-05-15T00:00:00Z",
+      "stop_utc": "2025-05-22T03:00:00Z"
+    },
+    {
+      "duration_days": 12.375,
+      "interval_ids": [
+        "moderate-2025-20250529T0000",
+        "severe-2025-20250601T0600",
+        "moderate-2025-20250601T1800",
+        "severe-2025-20250602T0600",
+        "severe-2025-20250603T0300"
+      ],
+      "start_utc": "2025-05-27T00:00:00Z",
+      "stop_utc": "2025-06-08T09:00:00Z"
+    },
+    {
+      "duration_days": 8.0,
+      "interval_ids": [
+        "moderate-2025-20250613T0000",
+        "moderate-2025-20250613T1200",
+        "moderate-2025-20250613T1800"
+      ],
+      "start_utc": "2025-06-11T00:00:00Z",
+      "stop_utc": "2025-06-19T00:00:00Z"
+    },
+    {
+      "duration_days": 14.0,
+      "interval_ids": [
+        "quiet-2025-jja-20250725"
+      ],
+      "start_utc": "2025-07-25T00:00:00Z",
+      "stop_utc": "2025-08-08T00:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2025-20250915T0000"
+      ],
+      "start_utc": "2025-09-13T00:00:00Z",
+      "stop_utc": "2025-09-20T03:00:00Z"
+    },
+    {
+      "duration_days": 9.125,
+      "interval_ids": [
+        "severe-2025-20250930T0300",
+        "moderate-2025-20250930T1800",
+        "moderate-2025-20251001T1800",
+        "moderate-2025-20251002T0300"
+      ],
+      "start_utc": "2025-09-28T03:00:00Z",
+      "stop_utc": "2025-10-07T06:00:00Z"
+    },
+    {
+      "duration_days": 7.125,
+      "interval_ids": [
+        "moderate-2025-20251018T1800"
+      ],
+      "start_utc": "2025-10-16T18:00:00Z",
+      "stop_utc": "2025-10-23T21:00:00Z"
+    },
+    {
+      "duration_days": 23.875,
+      "interval_ids": [
+        "moderate-2025-20251106T0300",
+        "moderate-2025-20251108T0000",
+        "severe-2025-20251112T0000",
+        "severe-2025-20251113T0000",
+        "quiet-2025-son-20251114"
+      ],
+      "start_utc": "2025-11-04T03:00:00Z",
+      "stop_utc": "2025-11-28T00:00:00Z"
+    },
+    {
+      "duration_days": 14.375,
+      "interval_ids": [
+        "moderate-2025-20251203T1800",
+        "moderate-2025-20251210T2100"
+      ],
+      "start_utc": "2025-12-01T18:00:00Z",
+      "stop_utc": "2025-12-16T03:00:00Z"
+    }
+  ],
+  "generated_at_utc": "2026-07-12T22:58:54.025263Z",
+  "intervals": [
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2021-mam-20210428",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 0.8901785714285715,
+      "peak_kp": 3.0,
+      "season": "MAM",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2021-04-28T00:00:00Z",
+      "stop_utc": "2021-05-12T00:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2021-20210512T1200",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.8500000000000005,
+      "peak_kp": 7.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2021-05-10T12:00:00Z",
+      "stop_utc": "2021-05-17T18:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2021-jja-20210811",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.0723214285714284,
+      "peak_kp": 3.3,
+      "season": "JJA",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2021-08-11T00:00:00Z",
+      "stop_utc": "2021-08-25T00:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2021-20211012T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2021-10-10T03:00:00Z",
+      "stop_utc": "2021-10-17T06:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2021-20211012T0900",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2021-10-10T09:00:00Z",
+      "stop_utc": "2021-10-17T12:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2021-son-20211016",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.1098214285714287,
+      "peak_kp": 4.0,
+      "season": "SON",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2021-10-16T00:00:00Z",
+      "stop_utc": "2021-10-30T00:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "moderate-2021-20211103T2100",
+      "kind": "moderate_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2021-11-01T21:00:00Z",
+      "stop_utc": "2021-11-09T03:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2021-20211104T0600",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 7.3500000000000005,
+      "peak_kp": 7.7,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2021-11-02T06:00:00Z",
+      "stop_utc": "2021-11-09T12:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2021-djf-20211205",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.0464285714285715,
+      "peak_kp": 3.3,
+      "season": "DJF",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2021-12-05T00:00:00Z",
+      "stop_utc": "2021-12-19T00:00:00Z",
+      "year": 2021
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2022-djf-20220120",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.8339285714285716,
+      "peak_kp": 4.0,
+      "season": "DJF",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2022-01-20T00:00:00Z",
+      "stop_utc": "2022-02-03T00:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2022-20220313T2100",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2022-03-11T21:00:00Z",
+      "stop_utc": "2022-03-19T00:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2022-20220410T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2022-04-08T03:00:00Z",
+      "stop_utc": "2022-04-15T06:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2022-20220414T1500",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2022-04-12T15:00:00Z",
+      "stop_utc": "2022-04-19T18:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2022-mam-20220501",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.2616071428571427,
+      "peak_kp": 3.0,
+      "season": "MAM",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2022-05-01T00:00:00Z",
+      "stop_utc": "2022-05-15T00:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2022-jja-20220724",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.6205357142857142,
+      "peak_kp": 4.0,
+      "season": "JJA",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2022-07-24T00:00:00Z",
+      "stop_utc": "2022-08-07T00:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2022-20220817T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2022-08-15T18:00:00Z",
+      "stop_utc": "2022-08-22T21:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "moderate-2022-20220904T0600",
+      "kind": "moderate_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.1499999999999995,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2022-09-02T06:00:00Z",
+      "stop_utc": "2022-09-09T12:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2022-20220904T1500",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2022-09-02T15:00:00Z",
+      "stop_utc": "2022-09-09T18:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2022-son-20221110",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 0.9214285714285715,
+      "peak_kp": 3.3,
+      "season": "SON",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2022-11-10T00:00:00Z",
+      "stop_utc": "2022-11-24T00:00:00Z",
+      "year": 2022
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2023-djf-20230123",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.4294642857142859,
+      "peak_kp": 3.3,
+      "season": "DJF",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2023-01-23T00:00:00Z",
+      "stop_utc": "2023-02-06T00:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.875,
+      "interval_id": "moderate-2023-20230227T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 21,
+      "mean_kp": 6.385714285714285,
+      "peak_kp": 6.7,
+      "season": "DJF",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-02-25T03:00:00Z",
+      "stop_utc": "2023-03-05T00:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2023-20230323T1200",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-03-21T12:00:00Z",
+      "stop_utc": "2023-03-28T15:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.625,
+      "interval_id": "severe-2023-20230323T1800",
+      "kind": "severe_storm",
+      "kp_samples": 15,
+      "mean_kp": 6.98,
+      "peak_kp": 8.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-03-21T18:00:00Z",
+      "stop_utc": "2023-03-29T09:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2023-mam-20230404",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.5946428571428573,
+      "peak_kp": 3.7,
+      "season": "MAM",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2023-04-04T00:00:00Z",
+      "stop_utc": "2023-04-18T00:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.625,
+      "interval_id": "severe-2023-20230423T1800",
+      "kind": "severe_storm",
+      "kp_samples": 15,
+      "mean_kp": 7.46,
+      "peak_kp": 8.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-04-21T18:00:00Z",
+      "stop_utc": "2023-04-29T09:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2023-20230506T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-05-04T03:00:00Z",
+      "stop_utc": "2023-05-11T06:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2023-20230616T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-06-14T03:00:00Z",
+      "stop_utc": "2023-06-21T06:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2023-20230805T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-08-03T03:00:00Z",
+      "stop_utc": "2023-08-10T06:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2023-jja-20230811",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.4223214285714285,
+      "peak_kp": 3.3,
+      "season": "JJA",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2023-08-11T00:00:00Z",
+      "stop_utc": "2023-08-25T00:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2023-20230919T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-09-17T03:00:00Z",
+      "stop_utc": "2023-09-24T06:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2023-20230919T1200",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-09-17T12:00:00Z",
+      "stop_utc": "2023-09-24T15:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2023-son-20231007",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.2232142857142858,
+      "peak_kp": 3.7,
+      "season": "SON",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2023-10-07T00:00:00Z",
+      "stop_utc": "2023-10-21T00:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.375,
+      "interval_id": "severe-2023-20231105T1200",
+      "kind": "severe_storm",
+      "kp_samples": 9,
+      "mean_kp": 6.766666666666667,
+      "peak_kp": 7.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-11-03T12:00:00Z",
+      "stop_utc": "2023-11-10T21:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2023-20231125T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-11-23T18:00:00Z",
+      "stop_utc": "2023-11-30T21:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "moderate-2023-20231201T0900",
+      "kind": "moderate_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.3500000000000005,
+      "peak_kp": 6.7,
+      "season": "DJF",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2023-11-29T09:00:00Z",
+      "stop_utc": "2023-12-06T15:00:00Z",
+      "year": 2023
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2024-djf-20240104",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.000892857142857,
+      "peak_kp": 2.7,
+      "season": "DJF",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2024-01-04T00:00:00Z",
+      "stop_utc": "2024-01-18T00:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240303T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-03-01T18:00:00Z",
+      "stop_utc": "2024-03-08T21:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.375,
+      "interval_id": "severe-2024-20240324T1200",
+      "kind": "severe_storm",
+      "kp_samples": 9,
+      "mean_kp": 7.0,
+      "peak_kp": 8.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-03-22T12:00:00Z",
+      "stop_utc": "2024-03-29T21:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2024-mam-20240402",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.6526785714285712,
+      "peak_kp": 3.3,
+      "season": "MAM",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2024-04-02T00:00:00Z",
+      "stop_utc": "2024-04-16T00:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "severe-2024-20240419T1800",
+      "kind": "severe_storm",
+      "kp_samples": 3,
+      "mean_kp": 7.0,
+      "peak_kp": 7.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-04-17T18:00:00Z",
+      "stop_utc": "2024-04-24T21:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "moderate-2024-20240502T1500",
+      "kind": "moderate_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-04-30T15:00:00Z",
+      "stop_utc": "2024-05-07T21:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 8.625,
+      "interval_id": "severe-2024-20240510T1500",
+      "kind": "severe_storm",
+      "kp_samples": 39,
+      "mean_kp": 8.107692307692307,
+      "peak_kp": 9.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-05-08T15:00:00Z",
+      "stop_utc": "2024-05-17T06:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240512T2100",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-05-10T21:00:00Z",
+      "stop_utc": "2024-05-18T00:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240513T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-05-11T03:00:00Z",
+      "stop_utc": "2024-05-18T06:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240516T0600",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-05-14T06:00:00Z",
+      "stop_utc": "2024-05-21T09:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240517T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-05-15T18:00:00Z",
+      "stop_utc": "2024-05-22T21:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240607T1200",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-06-05T12:00:00Z",
+      "stop_utc": "2024-06-12T15:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2024-20240628T0900",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.8500000000000005,
+      "peak_kp": 7.7,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-06-26T09:00:00Z",
+      "stop_utc": "2024-07-03T15:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2024-jja-20240710",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.2687499999999998,
+      "peak_kp": 3.3,
+      "season": "JJA",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2024-07-10T00:00:00Z",
+      "stop_utc": "2024-07-24T00:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2024-20240804T1200",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.8500000000000005,
+      "peak_kp": 7.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-08-02T12:00:00Z",
+      "stop_utc": "2024-08-09T18:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.75,
+      "interval_id": "severe-2024-20240812T0000",
+      "kind": "severe_storm",
+      "kp_samples": 18,
+      "mean_kp": 7.183333333333334,
+      "peak_kp": 8.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-08-10T00:00:00Z",
+      "stop_utc": "2024-08-17T18:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240812T2100",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-08-10T21:00:00Z",
+      "stop_utc": "2024-08-18T00:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240817T1500",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-08-15T15:00:00Z",
+      "stop_utc": "2024-08-22T18:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.5,
+      "interval_id": "severe-2024-20240912T0900",
+      "kind": "severe_storm",
+      "kp_samples": 12,
+      "mean_kp": 6.6000000000000005,
+      "peak_kp": 7.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-09-10T09:00:00Z",
+      "stop_utc": "2024-09-17T21:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240913T2100",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-09-11T21:00:00Z",
+      "stop_utc": "2024-09-19T00:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2024-20240917T0000",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 7.1499999999999995,
+      "peak_kp": 7.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-09-15T00:00:00Z",
+      "stop_utc": "2024-09-22T06:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20240917T0900",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-09-15T09:00:00Z",
+      "stop_utc": "2024-09-22T12:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2024-20241007T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-10-05T18:00:00Z",
+      "stop_utc": "2024-10-12T21:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2024-20241008T0000",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.8500000000000005,
+      "peak_kp": 7.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-10-06T00:00:00Z",
+      "stop_utc": "2024-10-13T06:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 8.0,
+      "interval_id": "severe-2024-20241010T1500",
+      "kind": "severe_storm",
+      "kp_samples": 24,
+      "mean_kp": 7.800000000000001,
+      "peak_kp": 8.7,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-10-08T15:00:00Z",
+      "stop_utc": "2024-10-16T15:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2024-son-20241116",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.5857142857142856,
+      "peak_kp": 4.0,
+      "season": "SON",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2024-11-16T00:00:00Z",
+      "stop_utc": "2024-11-30T00:00:00Z",
+      "year": 2024
+    },
+    {
+      "duration_days": 7.5,
+      "interval_id": "severe-2025-20250101T0900",
+      "kind": "severe_storm",
+      "kp_samples": 12,
+      "mean_kp": 6.75,
+      "peak_kp": 8.0,
+      "season": "DJF",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2024-12-30T09:00:00Z",
+      "stop_utc": "2025-01-06T21:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2025-djf-20250106",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 2.392857142857143,
+      "peak_kp": 4.0,
+      "season": "DJF",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2025-01-06T00:00:00Z",
+      "stop_utc": "2025-01-20T00:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250415T2100",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-04-13T21:00:00Z",
+      "stop_utc": "2025-04-21T00:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.375,
+      "interval_id": "severe-2025-20250416T1200",
+      "kind": "severe_storm",
+      "kp_samples": 9,
+      "mean_kp": 7.1,
+      "peak_kp": 7.7,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-04-14T12:00:00Z",
+      "stop_utc": "2025-04-21T21:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.0,
+      "interval_id": "quiet-2025-mam-20250423",
+      "kind": "quiet",
+      "kp_samples": 168,
+      "mean_kp": 1.5053571428571426,
+      "peak_kp": 3.7,
+      "season": "MAM",
+      "selection_rule": "lowest (7-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2025-04-23T00:00:00Z",
+      "stop_utc": "2025-04-30T00:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250517T0000",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-05-15T00:00:00Z",
+      "stop_utc": "2025-05-22T03:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250529T0000",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "MAM",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-05-27T00:00:00Z",
+      "stop_utc": "2025-06-03T03:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.375,
+      "interval_id": "severe-2025-20250601T0600",
+      "kind": "severe_storm",
+      "kp_samples": 9,
+      "mean_kp": 7.433333333333334,
+      "peak_kp": 7.7,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-05-30T06:00:00Z",
+      "stop_utc": "2025-06-06T15:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250601T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-05-30T18:00:00Z",
+      "stop_utc": "2025-06-06T21:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.375,
+      "interval_id": "severe-2025-20250602T0600",
+      "kind": "severe_storm",
+      "kp_samples": 9,
+      "mean_kp": 6.333333333333333,
+      "peak_kp": 7.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-05-31T06:00:00Z",
+      "stop_utc": "2025-06-07T15:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2025-20250603T0300",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.5,
+      "peak_kp": 7.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-06-01T03:00:00Z",
+      "stop_utc": "2025-06-08T09:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250613T0000",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-06-11T00:00:00Z",
+      "stop_utc": "2025-06-18T03:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250613T1200",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-06-11T12:00:00Z",
+      "stop_utc": "2025-06-18T15:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "moderate-2025-20250613T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "JJA",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-06-11T18:00:00Z",
+      "stop_utc": "2025-06-19T00:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2025-jja-20250725",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 1.7660714285714285,
+      "peak_kp": 4.0,
+      "season": "JJA",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2025-07-25T00:00:00Z",
+      "stop_utc": "2025-08-08T00:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250915T0000",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-09-13T00:00:00Z",
+      "stop_utc": "2025-09-20T03:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "severe-2025-20250930T0300",
+      "kind": "severe_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.5,
+      "peak_kp": 7.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-09-28T03:00:00Z",
+      "stop_utc": "2025-10-05T09:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20250930T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-09-28T18:00:00Z",
+      "stop_utc": "2025-10-05T21:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20251001T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-09-29T18:00:00Z",
+      "stop_utc": "2025-10-06T21:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20251002T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-09-30T03:00:00Z",
+      "stop_utc": "2025-10-07T06:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20251018T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.3,
+      "peak_kp": 6.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-10-16T18:00:00Z",
+      "stop_utc": "2025-10-23T21:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "moderate-2025-20251106T0300",
+      "kind": "moderate_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.3500000000000005,
+      "peak_kp": 6.7,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-11-04T03:00:00Z",
+      "stop_utc": "2025-11-11T09:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20251108T0000",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-11-06T00:00:00Z",
+      "stop_utc": "2025-11-13T03:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.5,
+      "interval_id": "severe-2025-20251112T0000",
+      "kind": "severe_storm",
+      "kp_samples": 12,
+      "mean_kp": 8.025,
+      "peak_kp": 8.7,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-11-10T00:00:00Z",
+      "stop_utc": "2025-11-17T12:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.375,
+      "interval_id": "severe-2025-20251113T0000",
+      "kind": "severe_storm",
+      "kp_samples": 9,
+      "mean_kp": 6.766666666666667,
+      "peak_kp": 7.3,
+      "season": "SON",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-11-11T00:00:00Z",
+      "stop_utc": "2025-11-18T09:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 14.0,
+      "interval_id": "quiet-2025-son-20251114",
+      "kind": "quiet",
+      "kp_samples": 336,
+      "mean_kp": 2.2330357142857142,
+      "peak_kp": 4.7,
+      "season": "SON",
+      "selection_rule": "lowest (14-day maximum Kp, mean Kp, UTC start date) among at least 75%-complete Kp<5 candidates wholly inside the season and not overlapping a Kp>=6 threshold episode; 14 days preferred with documented 7/3-day fallback when solar activity leaves no quiet block",
+      "start_utc": "2025-11-14T00:00:00Z",
+      "stop_utc": "2025-11-28T00:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.125,
+      "interval_id": "moderate-2025-20251203T1800",
+      "kind": "moderate_storm",
+      "kp_samples": 3,
+      "mean_kp": 6.7,
+      "peak_kp": 6.7,
+      "season": "DJF",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-12-01T18:00:00Z",
+      "stop_utc": "2025-12-08T21:00:00Z",
+      "year": 2025
+    },
+    {
+      "duration_days": 7.25,
+      "interval_id": "moderate-2025-20251210T2100",
+      "kind": "moderate_storm",
+      "kp_samples": 6,
+      "mean_kp": 6.0,
+      "peak_kp": 6.0,
+      "season": "DJF",
+      "selection_rule": "all Kp >= 6 threshold episodes; two days pre-onset plus five days after the final threshold-labelled hour",
+      "start_utc": "2025-12-08T21:00:00Z",
+      "stop_utc": "2025-12-16T03:00:00Z",
+      "year": 2025
+    }
+  ],
+  "plan_id": "staged-2021-2025-9f13ff6639f5",
+  "plan_sha256": "9f13ff6639f59fac34f57f7ca3f03e790cb44d10523691ed0541f4fd3f0333ef",
+  "retained_observation_cadence": "1min",
+  "schema_version": "leo-multiyear-corpus-plan-v1",
+  "selection_source": {
+    "missing_kp_policy": "unavailable; never relabelled quiet",
+    "name": "local official NASA OMNI/Kp archive used by the Internal Console"
+  },
+  "size_estimate": {
+    "baseline_bytes": 323164734,
+    "basis": "measured five-day local official pilot; decimal bytes",
+    "processed_bytes": 284812216,
+    "rates": {
+      "baseline_bytes_per_day": 549249.6,
+      "processed_bytes_per_day": 484065.8,
+      "raw_bytes_per_day": 2775821.0
+    },
+    "raw_bytes": 1633223681,
+    "three_mode_feature_bytes": 3048325159,
+    "total_before_model_artifacts_bytes": 5289525790
+  },
+  "strategy": "thesis_stage_1_official_event_and_season_sample",
+  "study_period": {
+    "calendar_years": [
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "start_utc": "2021-01-01T00:00:00Z",
+    "stop_utc": "2026-01-01T00:00:00Z"
+  }
+}

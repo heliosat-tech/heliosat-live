@@ -1,0 +1,16 @@
+{
+  "schema_version": "leo-multiyear-corpus-plan-lineage-v1",
+  "plan_file": "corpus-plan.v1.json",
+  "plan_file_bytes": 57038,
+  "plan_file_sha256": "643a3ab581106d0cba809255f2756be25127486422d33f2d7a6fb43c7a9caf88",
+  "plan_id": "staged-2021-2025-9f13ff6639f5",
+  "selection_source": {
+    "file": "data/console/omni-archive.json",
+    "bytes": 1835866,
+    "sha256": "04fc51acc2e4c30db2eea866ec04d5d81c15c7ed42d0b20c234a633dade3c1db",
+    "coverage_start_utc": "2021-01-01T00:00:00Z",
+    "coverage_stop_utc": "2026-05-27T12:00:00Z",
+    "role": "official retrospective Kp event and quiet-interval selection only; never a density target or deployable M3 input"
+  },
+  "missing_kp_policy": "unavailable; never relabelled quiet"
+}

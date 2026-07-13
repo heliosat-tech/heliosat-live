@@ -30,7 +30,10 @@ chronological split or the feature whitelist is violated.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,7 +51,14 @@ from sklearn.preprocessing import StandardScaler
 
 from .dataset import PROJECT_ROOT, RE_KM, PairedRecord, build_paired_record
 from .evaluate import error_histogram, stratify_by_regime, summarize_errors
-from .features import FEATURE_NAMES, FEATURES, assert_no_leakage, build_features
+from .features import (
+    FEATURE_NAMES,
+    FEATURES,
+    FEATURE_SCHEMA_VERSION,
+    NOMINAL_BOW_SHOCK_X_RE,
+    assert_no_leakage,
+    build_features,
+)
 
 MODEL_DIR = PROJECT_ROOT / "data" / "ml-model" / "arrival-residual"
 FIGURES_DIR = MODEL_DIR / "figures"
@@ -58,6 +68,7 @@ SPLIT_PATH = CONSOLE_DIR / "ml_data_split.json"
 
 TRAIN_FRACTION = 0.7
 RANDOM_STATE = 42
+ARTIFACT_SCHEMA_VERSION = "heliosat-arrival-residual-artifact-v2"
 
 BENCHMARK_NAME = "MRU ballistic propagation"
 MODEL_NAME = "MRU + ML residual correction (HistGradientBoostingRegressor)"
@@ -75,6 +86,33 @@ def _now_utc() -> str:
 
 def _iso(ts: pd.Timestamp) -> str:
     return ts.isoformat().replace("+00:00", "Z")
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _git_state() -> dict[str, object]:
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        dirty = bool(subprocess.run(
+            ["git", "status", "--porcelain=v1"], check=True, capture_output=True, text=True
+        ).stdout.strip())
+        return {"gitRevision": revision or None, "workingTreeDirty": dirty}
+    except (OSError, subprocess.SubprocessError):
+        return {"gitRevision": None, "workingTreeDirty": None}
+
+
+def _runtime_versions() -> dict[str, str]:
+    versions = {"python": sys.version.split()[0]}
+    for package in ("numpy", "pandas", "scikit-learn", "joblib", "scipy"):
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = "unavailable"
+    return versions
 
 
 def make_hgb(max_iter: int) -> HistGradientBoostingRegressor:
@@ -408,9 +446,10 @@ def write_model_card(
         "independent in-situ detection."
     )
     lines.append(
-        "- `BSN_x` (bow-shock nose) is taken from the OMNI record for both benchmark and "
-        "ML, matching the study definition. A live deployment would estimate the standoff "
-        "from upstream pressure; that adds error not measured here."
+        "- The deployable benchmark uses a fixed causal bow-shock nose at 13.5 Re, the "
+        "same nominal assumption as the current live MRU path. OMNI `BSN_x` is retained "
+        "only as retrospective reference lineage and is not a model feature. A live "
+        "pressure-dependent standoff estimate would add uncertainty not measured here."
     )
     lines.append(
         "- Features come from the OMNI high-res record, whose plasma and field values are "
@@ -498,14 +537,48 @@ def main(argv: list[str] | None = None) -> int:
 
     print("[7/7] Persisting artifacts ...", flush=True)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    source_checksums = {
+        name: _sha256(PROJECT_ROOT / "data" / "cache" / "omni_high_res" / name)
+        for name in record.source_files
+    }
+    version_basis = {
+        "artifactSchemaVersion": ARTIFACT_SCHEMA_VERSION,
+        "featureSchemaVersion": FEATURE_SCHEMA_VERSION,
+        "featureNames": FEATURE_NAMES,
+        "sourceChecksumsSha256": source_checksums,
+        "trainRange": [_iso(train["time"].iloc[0]), _iso(train["time"].iloc[-1])],
+        "validationRange": [_iso(val["time"].iloc[0]), _iso(val["time"].iloc[-1])],
+        "randomState": RANDOM_STATE,
+        "maxIter": args.max_iter,
+        "sklearnVersion": sklearn.__version__,
+    }
+    model_version = "arrival-residual-v2-" + hashlib.sha256(
+        json.dumps(version_basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
     joblib.dump(
         {
+            "artifactSchemaVersion": ARTIFACT_SCHEMA_VERSION,
+            "modelVersion": model_version,
             "model": model,
+            "featureSchemaVersion": FEATURE_SCHEMA_VERSION,
             "featureNames": FEATURE_NAMES,
-            "target": "target_resid_min = OMNI Timeshift/60 - MRU ballistic delay (min)",
+            "target": "target_resid_min = OMNI Timeshift/60 - causal nominal-geometry MRU delay (min)",
+            "benchmarkGeometry": {
+                "bowShockNoseXRe": NOMINAL_BOW_SHOCK_X_RE,
+                "availability": "fixed causal assumption",
+                "referenceBsnXUsedAsFeature": False,
+            },
             "trainedAtUtc": _now_utc(),
-            "trainRange": [_iso(train["time"].iloc[0]), _iso(train["time"].iloc[-1])],
+            "trainRange": version_basis["trainRange"],
+            "validationRange": version_basis["validationRange"],
             "sklearnVersion": sklearn.__version__,
+            "runtimeVersions": _runtime_versions(),
+            "hyperparameters": model.get_params(deep=False),
+            "randomState": RANDOM_STATE,
+            "sourceFiles": record.source_files,
+            "sourceChecksumsSha256": source_checksums,
+            "metrics": overall,
+            "codeState": _git_state(),
         },
         MODEL_DIR / "model.joblib",
     )
@@ -523,6 +596,19 @@ def main(argv: list[str] | None = None) -> int:
     generated_at = _now_utc()
     metrics_payload = {
         "generatedAtUtc": generated_at,
+        "artifact": {
+            "schemaVersion": ARTIFACT_SCHEMA_VERSION,
+            "modelVersion": model_version,
+            "featureSchemaVersion": FEATURE_SCHEMA_VERSION,
+            "sklearnVersion": sklearn.__version__,
+            "featureNames": FEATURE_NAMES,
+            "sourceChecksumsSha256": source_checksums,
+            "benchmarkGeometry": {
+                "bowShockNoseXRe": NOMINAL_BOW_SHOCK_X_RE,
+                "availability": "fixed causal assumption",
+                "referenceBsnXUsedAsFeature": False,
+            },
+        },
         "benchmarkName": BENCHMARK_NAME,
         "modelName": MODEL_NAME,
         "pairing": {
@@ -576,6 +662,10 @@ def main(argv: list[str] | None = None) -> int:
         "generatedAtUtc": generated_at,
         "model": {
             "name": MODEL_NAME,
+            "modelVersion": model_version,
+            "artifactSchemaVersion": ARTIFACT_SCHEMA_VERSION,
+            "featureSchemaVersion": FEATURE_SCHEMA_VERSION,
+            "sklearnVersion": sklearn.__version__,
             "algorithm": "sklearn HistGradientBoostingRegressor (absolute_error loss), ridge baseline",
             "target": "OMNI propagation delay minus MRU ballistic delay, minutes",
             "artifact": "data/ml-model/arrival-residual/model.joblib",
@@ -608,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
                 "key": "omni",
                 "usedByModel": True,
                 "role": "Training target and validation reference: OMNI Timeshift is the observed propagation delay the residual is measured against.",
-                "variables": ["timeshift_s (target side)", "bsn_x_re (benchmark geometry)", "kp (regime labels)"],
+                "variables": ["timeshift_s (target side)", "bsn_x_re (reference lineage only)", "kp (regime labels)"],
             },
             {
                 "key": "geo",

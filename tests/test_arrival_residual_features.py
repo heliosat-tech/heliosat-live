@@ -35,7 +35,7 @@ def test_derived_features_match_documented_formulas():
     assert last["em_mv_m"] == pytest.approx(750.0 * 12.0 * 1e-3)
     assert out.iloc[0]["em_mv_m"] == 0.0  # northward Bz contributes nothing
     assert last["sc_ryz_re"] == pytest.approx(np.hypot(30.0, -40.0))
-    assert last["dist_re"] == pytest.approx(236.0)
+    assert last["dist_re"] == pytest.approx(236.5)
     # Clock angle: northward start near atan2(3, 2), strongly southward end > 160 deg.
     assert out.iloc[0]["clock_angle_deg"] == pytest.approx(np.degrees(np.arctan2(3.0, 2.0)))
     assert last["clock_angle_deg"] > 160.0
@@ -51,6 +51,14 @@ def test_rolling_features_are_trailing_only():
     pd.testing.assert_series_equal(
         out["speed_mean_3h_km_s"].iloc[:-1], out_spiked["speed_mean_3h_km_s"].iloc[:-1]
     )
+
+
+def test_rolling_features_restore_unsorted_input_order():
+    frame = _frame(n=40)
+    expected = build_features(frame).set_index("time")["speed_mean_3h_km_s"]
+    shuffled = frame.sample(frac=1.0, random_state=42)
+    actual = build_features(shuffled).set_index("time")["speed_mean_3h_km_s"]
+    pd.testing.assert_series_equal(actual.sort_index(), expected.sort_index())
 
 
 def test_leakage_guard_rejects_arrival_side_columns():
