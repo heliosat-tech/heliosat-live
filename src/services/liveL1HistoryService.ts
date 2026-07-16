@@ -3,8 +3,8 @@
  *
  * Raw L1 comes from a few government spacecraft through two largely independent
  * real-time pipelines:
- *   - NOAA SWPC — new multi-spacecraft RTSW JSON (legacy product feed as a
- *     fallback until it retires ~2026-06-30). See ./l1/swpcRtswSource.
+ *   - NOAA SWPC — current multi-spacecraft RTSW JSON object products. Retired
+ *     table products are not queried. See ./l1/swpcRtswSource.
  *   - NASA IMAP I-ALiRT — its own ground path, behind a swappable adapter. See
  *     ./l1/imapIalirtSource.
  *

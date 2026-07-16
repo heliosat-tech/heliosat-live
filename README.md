@@ -12,10 +12,11 @@ This statement describes the public dashboard. The authenticated Internal Consol
 
 | Panel | Source | Endpoint |
 |---|---|---|
-| L1 Solar Wind — Magnetometer | NOAA SWPC | `https://services.swpc.noaa.gov/products/solar-wind/mag-2-hour.json` |
-| L1 Solar Wind — Plasma | NOAA SWPC | `https://services.swpc.noaa.gov/products/solar-wind/plasma-2-hour.json` |
+| L1 Solar Wind — Magnetometer | NOAA SWPC RTSW | `https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json` |
+| L1 Solar Wind — Plasma | NOAA SWPC RTSW | `https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json` |
+| L1 spacecraft ephemerides | NOAA SWPC RTSW | `https://services.swpc.noaa.gov/json/rtsw/rtsw_ephemerides_1h.json` |
 | NOAA Alerts | NOAA SWPC | `https://services.swpc.noaa.gov/products/alerts.json` |
-| Satellite TLE Catalog | CelesTrak | `https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle` |
+| Satellite TLE Catalog | CelesTrak | `https://celestrak.org/NORAD/elements/gp.php?GROUP=STATIONS&FORMAT=TLE` |
 
 ---
 
@@ -62,14 +63,14 @@ If SGP4 propagation fails for a satellite (e.g., TLE is too old or degenerate), 
 
 ## Known Limitations
 
-- **No real-time auto-refresh**: The dashboard is server-rendered on each page load. Client-side live updates for satellite positions use a 1-second `setInterval` running `satellite.js` locally — no polling of the API. NOAA/CelesTrak data is fetched fresh on each browser navigation.
+- **Live refresh boundaries**: Solar-wind inputs are refreshed on server navigation. Satellite positions use a 1-second `setInterval` running `satellite.js` locally; a client-side CelesTrak recovery updates the shared catalog/status without adding another upstream poll loop.
 - **SGP4 accuracy**: SGP4 is the standard orbital model for NORAD TLEs. It is accurate for low-to-medium Earth orbit over short time spans. It does not account for atmospheric drag beyond the TLE epoch or high-precision manoeuvre modelling.
 - **Inclination extraction**: `inclinationDeg` is taken from `satrec.inclo` (stored in radians by `satellite.js`), which is the direct TLE field — not computed from the propagated position.
-- **L1 Monitor Marker**: The L1 position shown in the 3D view is a **conceptual indicator** at a fixed Sun-facing point. No actual spacecraft ephemeris (e.g., DSCOVR or ACE) is connected.
+- **L1 Monitor Marker**: The L1 position shown in the 3D view remains a **conceptual indicator** at a fixed Sun-facing point; that visual marker does not consume the measured RTSW spacecraft ephemeris used by the propagation pipeline.
 - **Solar wind and B-field vectors**: These are rendered in the 3D scene only when real NOAA data is available. Direction and magnitude are qualitative visual aids — they are not precision-scaled physical vectors.
 - **Forecast Module**: Entirely disabled. No synthetic forecast is generated. The panel will remain in a "not connected" state until a real NOAA/NASA forecast endpoint is integrated.
 - **Mobile**: The layout is desktop-first. Tablet is usable. Mobile screens may have horizontal overflow.
-- **CelesTrak group**: Only the `stations` group (ISS, CSS, etc.) is fetched by default. The service layer supports dynamic group names (`starlink`, `weather`, `active`) but they are not enabled in the UI.
+- **CelesTrak groups**: `stations` is fetched by default; `weather`, `starlink`, and `active` can be selected from the satellite configuration UI. The current TLE path cannot represent newly cataloged six-digit objects, so an OMM migration is still required for complete future catalog coverage.
 
 ---
 

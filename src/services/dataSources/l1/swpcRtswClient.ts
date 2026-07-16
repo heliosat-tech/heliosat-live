@@ -1,8 +1,6 @@
 import {
-  columnIndex,
   compactQualityFlags,
   fetchJsonWithRetry,
-  minuteKey,
   parseTimestampMs,
   toFiniteNumber,
 } from '../dataSourceUtils';
@@ -21,24 +19,27 @@ interface SwpcRtswOptions {
   includeEphemeris?: boolean;
 }
 
-const SWPC_SOLAR_WIND_BASE_URL = 'https://services.swpc.noaa.gov/products/solar-wind';
+const SWPC_RTSW_BASE_URL = 'https://services.swpc.noaa.gov/json/rtsw';
+const MAGNETIC_FIELD_URL = `${SWPC_RTSW_BASE_URL}/rtsw_mag_1m.json`;
+const SOLAR_WIND_URL = `${SWPC_RTSW_BASE_URL}/rtsw_wind_1m.json`;
+const EPHEMERIS_URL = `${SWPC_RTSW_BASE_URL}/rtsw_ephemerides_1h.json`;
 const REQUEST_TIMEOUT_MS = 12_000;
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
-const PRODUCT_BY_WINDOW: Record<SwpcRtswWindow, { mag: string; plasma: string }> = {
-  '2-hour': {
-    mag: `${SWPC_SOLAR_WIND_BASE_URL}/mag-2-hour.json`,
-    plasma: `${SWPC_SOLAR_WIND_BASE_URL}/plasma-2-hour.json`,
-  },
-  '7-day': {
-    mag: `${SWPC_SOLAR_WIND_BASE_URL}/mag-7-day.json`,
-    plasma: `${SWPC_SOLAR_WIND_BASE_URL}/plasma-7-day.json`,
-  },
-};
+interface SelectedRtswRecord {
+  record: Record<string, unknown>;
+  timestampMs: number;
+  active: boolean;
+  source: string;
+}
 
-const EPHEMERIS_URL = `${SWPC_SOLAR_WIND_BASE_URL}/ephemerides.json`;
+interface RtswMinuteGroup {
+  minuteMs: number;
+  records: SelectedRtswRecord[];
+}
 
 interface MutableL1Sample {
-  timeUtc: string;
+  timeMs: number;
   speedKmS: number | null;
   densityCm3: number | null;
   temperatureK: number | null;
@@ -54,7 +55,8 @@ function buildAttribution(
   dataset: string,
   url: string,
   retrievedAtUtc: string,
-  cadenceSeconds: number | null,
+  cadenceSeconds: number,
+  window: SwpcRtswWindow,
 ): SourceAttribution {
   return {
     sourceId: 'swpc_rtsw',
@@ -63,6 +65,9 @@ function buildAttribution(
     url,
     retrievedAtUtc,
     cadenceSeconds,
+    notes: window === '7-day'
+      ? 'The canonical RTSW object feed exposes its available retention window; the retired seven-day product is not queried.'
+      : undefined,
   };
 }
 
@@ -79,8 +84,98 @@ function parseSpacecraft(value: unknown, fallback: L1Spacecraft): L1Spacecraft {
   return fallback;
 }
 
-function tableRows(data: unknown) {
-  return Array.isArray(data) ? data : [];
+function mergeSpacecraft(current: L1Spacecraft | null, next: L1Spacecraft): L1Spacecraft {
+  if (current === null || current === 'unknown') return next;
+  if (next === 'unknown' || next === current) return current;
+  return 'active';
+}
+
+function minuteBucket(timestampMs: number) {
+  return Math.floor(timestampMs / 60_000) * 60_000;
+}
+
+function isActiveRecord(value: unknown) {
+  return value === true || value === 1 || value === 'true' || value === '1';
+}
+
+function recordSource(record: Record<string, unknown>) {
+  return typeof record.source === 'string' ? record.source.trim() : '';
+}
+
+function comparePreferredRecord(a: SelectedRtswRecord, b: SelectedRtswRecord) {
+  if (a.active !== b.active) {
+    return a.active ? -1 : 1;
+  }
+
+  if (a.timestampMs !== b.timestampMs) {
+    return b.timestampMs - a.timestampMs;
+  }
+
+  return a.source.localeCompare(b.source);
+}
+
+function groupRecordsByMinute(data: unknown): RtswMinuteGroup[] {
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  const grouped = new Map<number, SelectedRtswRecord[]>();
+
+  for (const value of data) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      continue;
+    }
+
+    const record = value as Record<string, unknown>;
+    const timestampMs = parseTimestampMs(record.time_tag);
+    if (timestampMs === null) {
+      continue;
+    }
+
+    const candidate: SelectedRtswRecord = {
+      record,
+      timestampMs,
+      active: isActiveRecord(record.active),
+      source: recordSource(record),
+    };
+    const key = minuteBucket(timestampMs);
+    grouped.set(key, [...(grouped.get(key) ?? []), candidate]);
+  }
+
+  return [...grouped.entries()]
+    .map(([minuteMs, records]) => ({
+      minuteMs,
+      records: records.sort(comparePreferredRecord),
+    }))
+    .sort((a, b) => a.minuteMs - b.minuteMs);
+}
+
+function preferredRecord(group: RtswMinuteGroup) {
+  return group.records[0];
+}
+
+function valueFromGroup(group: RtswMinuteGroup, field: string): number | null {
+  for (const { record } of group.records) {
+    const value = toFiniteNumber(record[field]);
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function applyRequestedWindow(groups: RtswMinuteGroup[], window: SwpcRtswWindow) {
+  if (window !== '2-hour' || groups.length === 0) {
+    return groups;
+  }
+
+  const latestTimestampMs = preferredRecord(groups[groups.length - 1]).timestampMs;
+  return groups.filter(group => preferredRecord(group).timestampMs >= latestTimestampMs - TWO_HOURS_MS);
+}
+
+function spacecraftFor(record: SelectedRtswRecord): L1Spacecraft {
+  return parseSpacecraft(record.source, record.active ? 'active' : 'unknown');
 }
 
 function sampleQualityFlags(sample: MutableL1Sample) {
@@ -95,78 +190,55 @@ function sampleQualityFlags(sample: MutableL1Sample) {
   ]);
 }
 
-function parseMagRows(
+function parseMagRecords(
   data: unknown,
+  window: SwpcRtswWindow,
   attribution: SourceAttribution,
   byMinute: Map<number, MutableL1Sample>,
 ) {
-  const rows = tableRows(data);
-  const columns = columnIndex(rows);
-  const timeIdx = columns.time_tag ?? 0;
-  const bxIdx = columns.bx_gsm ?? -1;
-  const byIdx = columns.by_gsm ?? -1;
-  const bzIdx = columns.bz_gsm ?? -1;
-  const btIdx = columns.bt ?? -1;
-  const spacecraftIdx = columns.spacecraft ?? columns.satellite ?? columns.source ?? -1;
+  const groups = applyRequestedWindow(groupRecordsByMinute(data), window);
 
-  for (let index = 1; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (!Array.isArray(row)) continue;
-
-    const timestampMs = parseTimestampMs(row[timeIdx]);
-    if (timestampMs === null) continue;
-
-    const key = minuteKey(timestampMs);
+  for (const group of groups) {
+    const selected = preferredRecord(group);
+    const key = group.minuteMs;
     const existing = byMinute.get(key);
-    const timeUtc = new Date(key).toISOString();
-    const spacecraft = parseSpacecraft(spacecraftIdx >= 0 ? row[spacecraftIdx] : null, existing?.spacecraft ?? 'active');
 
     byMinute.set(key, {
-      timeUtc,
-      spacecraft,
+      timeMs: Math.max(existing?.timeMs ?? -Infinity, selected.timestampMs),
+      spacecraft: mergeSpacecraft(existing?.spacecraft ?? null, spacecraftFor(selected)),
       speedKmS: existing?.speedKmS ?? null,
       densityCm3: existing?.densityCm3 ?? null,
       temperatureK: existing?.temperatureK ?? null,
-      bxGsmNt: bxIdx >= 0 ? toFiniteNumber(row[bxIdx]) : existing?.bxGsmNt ?? null,
-      byGsmNt: byIdx >= 0 ? toFiniteNumber(row[byIdx]) : existing?.byGsmNt ?? null,
-      bzGsmNt: bzIdx >= 0 ? toFiniteNumber(row[bzIdx]) : existing?.bzGsmNt ?? null,
-      btNt: btIdx >= 0 ? toFiniteNumber(row[btIdx]) : existing?.btNt ?? null,
+      bxGsmNt: valueFromGroup(group, 'bx_gsm'),
+      byGsmNt: valueFromGroup(group, 'by_gsm'),
+      bzGsmNt: valueFromGroup(group, 'bz_gsm'),
+      btNt: valueFromGroup(group, 'bt'),
       sourceAttribution: [...(existing?.sourceAttribution ?? []), attribution],
     });
   }
+
+  return groups.length;
 }
 
-function parsePlasmaRows(
+function parseWindRecords(
   data: unknown,
+  window: SwpcRtswWindow,
   attribution: SourceAttribution,
   byMinute: Map<number, MutableL1Sample>,
 ) {
-  const rows = tableRows(data);
-  const columns = columnIndex(rows);
-  const timeIdx = columns.time_tag ?? 0;
-  const densityIdx = columns.density ?? -1;
-  const speedIdx = columns.speed ?? -1;
-  const temperatureIdx = columns.temperature ?? -1;
-  const spacecraftIdx = columns.spacecraft ?? columns.satellite ?? columns.source ?? -1;
+  const groups = applyRequestedWindow(groupRecordsByMinute(data), window);
 
-  for (let index = 1; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (!Array.isArray(row)) continue;
-
-    const timestampMs = parseTimestampMs(row[timeIdx]);
-    if (timestampMs === null) continue;
-
-    const key = minuteKey(timestampMs);
+  for (const group of groups) {
+    const selected = preferredRecord(group);
+    const key = group.minuteMs;
     const existing = byMinute.get(key);
-    const timeUtc = new Date(key).toISOString();
-    const spacecraft = parseSpacecraft(spacecraftIdx >= 0 ? row[spacecraftIdx] : null, existing?.spacecraft ?? 'active');
 
     byMinute.set(key, {
-      timeUtc,
-      spacecraft,
-      speedKmS: speedIdx >= 0 ? toFiniteNumber(row[speedIdx]) : existing?.speedKmS ?? null,
-      densityCm3: densityIdx >= 0 ? toFiniteNumber(row[densityIdx]) : existing?.densityCm3 ?? null,
-      temperatureK: temperatureIdx >= 0 ? toFiniteNumber(row[temperatureIdx]) : existing?.temperatureK ?? null,
+      timeMs: Math.max(existing?.timeMs ?? -Infinity, selected.timestampMs),
+      spacecraft: mergeSpacecraft(existing?.spacecraft ?? null, spacecraftFor(selected)),
+      speedKmS: valueFromGroup(group, 'proton_speed'),
+      densityCm3: valueFromGroup(group, 'proton_density'),
+      temperatureK: valueFromGroup(group, 'proton_temperature'),
       bxGsmNt: existing?.bxGsmNt ?? null,
       byGsmNt: existing?.byGsmNt ?? null,
       bzGsmNt: existing?.bzGsmNt ?? null,
@@ -174,38 +246,27 @@ function parsePlasmaRows(
       sourceAttribution: [...(existing?.sourceAttribution ?? []), attribution],
     });
   }
+
+  return groups.length;
 }
 
-function parseEphemerisRows(data: unknown, attribution: SourceAttribution): L1EphemerisSample[] {
-  const rows = tableRows(data);
-  const columns = columnIndex(rows);
-  const timeIdx = columns.time_tag ?? 0;
-  const spacecraftIdx = columns.spacecraft ?? columns.satellite ?? columns.source ?? -1;
-  const xGseIdx = columns.x_gse ?? -1;
-  const yGseIdx = columns.y_gse ?? -1;
-  const zGseIdx = columns.z_gse ?? -1;
-  const xGsmIdx = columns.x_gsm ?? -1;
-  const yGsmIdx = columns.y_gsm ?? -1;
-  const zGsmIdx = columns.z_gsm ?? -1;
-  const samples: L1EphemerisSample[] = [];
-
-  for (let index = 1; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (!Array.isArray(row)) continue;
-
-    const timestampMs = parseTimestampMs(row[timeIdx]);
-    if (timestampMs === null) continue;
-
+function parseEphemerisRecords(
+  data: unknown,
+  window: SwpcRtswWindow,
+  attribution: SourceAttribution,
+): L1EphemerisSample[] {
+  return applyRequestedWindow(groupRecordsByMinute(data), window).map(group => {
+    const selected = preferredRecord(group);
     const sample: L1EphemerisSample = {
-      timeUtc: new Date(minuteKey(timestampMs)).toISOString(),
+      timeUtc: new Date(selected.timestampMs).toISOString(),
       source: 'swpc_rtsw',
-      spacecraft: parseSpacecraft(spacecraftIdx >= 0 ? row[spacecraftIdx] : null, 'active'),
-      xGseKm: xGseIdx >= 0 ? toFiniteNumber(row[xGseIdx]) : null,
-      yGseKm: yGseIdx >= 0 ? toFiniteNumber(row[yGseIdx]) : null,
-      zGseKm: zGseIdx >= 0 ? toFiniteNumber(row[zGseIdx]) : null,
-      xGsmKm: xGsmIdx >= 0 ? toFiniteNumber(row[xGsmIdx]) : null,
-      yGsmKm: yGsmIdx >= 0 ? toFiniteNumber(row[yGsmIdx]) : null,
-      zGsmKm: zGsmIdx >= 0 ? toFiniteNumber(row[zGsmIdx]) : null,
+      spacecraft: spacecraftFor(selected),
+      xGseKm: valueFromGroup(group, 'x_gse'),
+      yGseKm: valueFromGroup(group, 'y_gse'),
+      zGseKm: valueFromGroup(group, 'z_gse'),
+      xGsmKm: valueFromGroup(group, 'x_gsm'),
+      yGsmKm: valueFromGroup(group, 'y_gsm'),
+      zGsmKm: valueFromGroup(group, 'z_gsm'),
       qualityFlags: [],
       sourceAttribution: [attribution],
     };
@@ -217,58 +278,98 @@ function parseEphemerisRows(data: unknown, attribution: SourceAttribution): L1Ep
       sample.yGsmKm === null ? 'missing_y_gsm' : null,
       sample.zGsmKm === null ? 'missing_z_gsm' : null,
     ]);
-    samples.push(sample);
-  }
-
-  return samples.sort((a, b) => new Date(a.timeUtc).getTime() - new Date(b.timeUtc).getTime());
+    return sample;
+  });
 }
 
 export async function fetchSwpcRtswL1Samples(options: SwpcRtswOptions = {}): Promise<L1FetchResult> {
   const fetchedAtUtc = new Date().toISOString();
   const window = options.window ?? '2-hour';
   const includeEphemeris = options.includeEphemeris ?? true;
-  const products = PRODUCT_BY_WINDOW[window];
-  const magAttribution = buildAttribution(`RTSW magnetic field ${window}`, products.mag, fetchedAtUtc, 60);
-  const plasmaAttribution = buildAttribution(`RTSW plasma ${window}`, products.plasma, fetchedAtUtc, 60);
-  const ephemerisAttribution = buildAttribution('RTSW spacecraft ephemeris', EPHEMERIS_URL, fetchedAtUtc, 60);
+  const magAttribution = buildAttribution(
+    'RTSW magnetic field 1-minute',
+    MAGNETIC_FIELD_URL,
+    fetchedAtUtc,
+    60,
+    window,
+  );
+  const windAttribution = buildAttribution(
+    'RTSW solar wind 1-minute',
+    SOLAR_WIND_URL,
+    fetchedAtUtc,
+    60,
+    window,
+  );
+  const ephemerisAttribution = buildAttribution(
+    'RTSW spacecraft ephemeris 1-hour',
+    EPHEMERIS_URL,
+    fetchedAtUtc,
+    3_600,
+    window,
+  );
   const attributions = includeEphemeris
-    ? [magAttribution, plasmaAttribution, ephemerisAttribution]
-    : [magAttribution, plasmaAttribution];
+    ? [magAttribution, windAttribution, ephemerisAttribution]
+    : [magAttribution, windAttribution];
   const warnings: string[] = [];
   const errors: string[] = [];
   const byMinute = new Map<number, MutableL1Sample>();
   let ephemerisSamples: L1EphemerisSample[] = [];
 
-  const [magResult, plasmaResult, ephemerisResult] = await Promise.allSettled([
-    fetchJsonWithRetry(products.mag, { timeoutMs: REQUEST_TIMEOUT_MS, retries: 1, label: 'NOAA SWPC RTSW magnetic field' }),
-    fetchJsonWithRetry(products.plasma, { timeoutMs: REQUEST_TIMEOUT_MS, retries: 1, label: 'NOAA SWPC RTSW plasma' }),
+  const [magResult, windResult, ephemerisResult] = await Promise.allSettled([
+    fetchJsonWithRetry(MAGNETIC_FIELD_URL, {
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      retries: 1,
+      label: 'NOAA SWPC RTSW magnetic field',
+    }),
+    fetchJsonWithRetry(SOLAR_WIND_URL, {
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      retries: 1,
+      label: 'NOAA SWPC RTSW solar wind',
+    }),
     includeEphemeris
-      ? fetchJsonWithRetry(EPHEMERIS_URL, { timeoutMs: REQUEST_TIMEOUT_MS, retries: 1, label: 'NOAA SWPC RTSW ephemeris' })
+      ? fetchJsonWithRetry(EPHEMERIS_URL, {
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        retries: 1,
+        label: 'NOAA SWPC RTSW ephemeris',
+      })
       : Promise.resolve([]),
   ]);
 
   if (magResult.status === 'fulfilled') {
-    parseMagRows(magResult.value, magAttribution, byMinute);
+    if (parseMagRecords(magResult.value, window, magAttribution, byMinute) === 0) {
+      errors.push('NOAA SWPC RTSW magnetic field returned no usable object records');
+    }
   } else {
-    errors.push(magResult.reason instanceof Error ? magResult.reason.message : 'NOAA SWPC RTSW magnetic field failed');
+    errors.push(magResult.reason instanceof Error
+      ? magResult.reason.message
+      : 'NOAA SWPC RTSW magnetic field failed');
   }
 
-  if (plasmaResult.status === 'fulfilled') {
-    parsePlasmaRows(plasmaResult.value, plasmaAttribution, byMinute);
+  if (windResult.status === 'fulfilled') {
+    if (parseWindRecords(windResult.value, window, windAttribution, byMinute) === 0) {
+      errors.push('NOAA SWPC RTSW solar wind returned no usable object records');
+    }
   } else {
-    errors.push(plasmaResult.reason instanceof Error ? plasmaResult.reason.message : 'NOAA SWPC RTSW plasma failed');
+    errors.push(windResult.reason instanceof Error
+      ? windResult.reason.message
+      : 'NOAA SWPC RTSW solar wind failed');
   }
 
   if (includeEphemeris && ephemerisResult.status === 'fulfilled') {
-    ephemerisSamples = parseEphemerisRows(ephemerisResult.value, ephemerisAttribution);
+    ephemerisSamples = parseEphemerisRecords(ephemerisResult.value, window, ephemerisAttribution);
+    if (ephemerisSamples.length === 0) {
+      warnings.push('NOAA SWPC RTSW ephemeris returned no usable object records');
+    }
   } else if (includeEphemeris && ephemerisResult.status === 'rejected') {
-    warnings.push(ephemerisResult.reason instanceof Error ? ephemerisResult.reason.message : 'NOAA SWPC RTSW ephemeris failed');
+    warnings.push(ephemerisResult.reason instanceof Error
+      ? ephemerisResult.reason.message
+      : 'NOAA SWPC RTSW ephemeris failed');
   }
 
   const samples: L1Sample[] = [...byMinute.values()]
-    .sort((a, b) => new Date(a.timeUtc).getTime() - new Date(b.timeUtc).getTime())
+    .sort((a, b) => a.timeMs - b.timeMs)
     .map(sample => ({
-      timeUtc: sample.timeUtc,
+      timeUtc: new Date(sample.timeMs).toISOString(),
       source: 'swpc_rtsw',
       spacecraft: sample.spacecraft,
       speedKmS: sample.speedKmS,
@@ -279,7 +380,9 @@ export async function fetchSwpcRtswL1Samples(options: SwpcRtswOptions = {}): Pro
       bzGsmNt: sample.bzGsmNt,
       btNt: sample.btNt,
       qualityFlags: sampleQualityFlags(sample),
-      sourceAttribution: [...new Map(sample.sourceAttribution.map(attr => [attr.dataset, attr])).values()],
+      sourceAttribution: [
+        ...new Map(sample.sourceAttribution.map(attribution => [attribution.dataset, attribution])).values(),
+      ],
     }));
 
   return {

@@ -523,13 +523,13 @@ export function DataPipelinePanel({ onGoToValidation, onGoToLive }: ModelsOvervi
       </PipelineStage>
 
       {/* 4 · Live forecasting */}
-      <PipelineStage index={4} icon={Radar} title="Live forecasting" source="DSCOVR · NOAA real-time">
+      <PipelineStage index={4} icon={Radar} title="Live forecasting" source="SWPC active RTSW · NOAA real-time">
         <p className="max-w-3xl text-xs leading-relaxed text-slate-400">
           On the live feed the trained artifact runs automatically (no action): each L1 parcel is propagated to its Earth-arrival time
           and the model corrects speed / |B| / Bz / density there.
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <DataField label="Input now"><span className="text-cyan-200">DSCOVR</span> real-time L1 (NOAA SWPC, 2-hour feed) + spacecraft ephemeris for the exact L1 distance</DataField>
+          <DataField label="Input now"><span className="text-cyan-200">SWPC active RTSW</span> real-time L1 (one-minute magnetometer/plasma products) + hourly spacecraft ephemeris for the measured L1 distance</DataField>
           <DataField label="Full horizon">missing short-lag features (not measured yet) are carried forward so ML reaches the same lead time as MRU</DataField>
           <DataField label="Anchored to live level">the correction is applied over the live baseline, so a different L1 source can&apos;t inject a calibration offset</DataField>
         </div>
@@ -547,17 +547,17 @@ export function DataPipelinePanel({ onGoToValidation, onGoToLive }: ModelsOvervi
           <h2 className="text-xs font-semibold uppercase tracking-widest text-amber-200">Does live data have to match the training data?</h2>
         </div>
         <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-300">
-          Ideally <span className="text-amber-200">yes — same instrument calibration</span>. Today we train on <span className="font-mono text-slate-200">ACE</span> (the longest clean L1+OMNI history)
-          but serve on <span className="font-mono text-slate-200">DSCOVR</span> (the current real-time L1). For speed and |B| the two agree, so it transfers fine. For
-          <span className="text-amber-200"> proton density</span> they don&apos;t: ACE&apos;s real-time density reads low, so the model learned an ACE→OMNI offset
+          Ideally <span className="text-amber-200">yes — same instrument calibration</span>. Today the artifact is trained on <span className="font-mono text-slate-200">ACE</span> (the longest clean L1+OMNI history)
+          while live serving uses the spacecraft SWPC marks active in RTSW. An instrument match is therefore not guaranteed. In particular,
+          <span className="text-amber-200"> proton density</span> can carry a source-dependent offset; the ACE training set contains an ACE→OMNI offset
           {densityFeatMean != null && densityYMean != null && (
             <> (<span className="font-mono">{densityFeatMean.toFixed(1)}</span> n/cc at L1 vs <span className="font-mono">{densityYMean.toFixed(1)}</span> n/cc at Earth in training)</>
           )}
-          {' '}that is wrong for DSCOVR and used to push the live density forecast ~2.5 n/cc too high.
+          {' '}that must not be treated as a validated correction for every active RTSW spacecraft.
         </p>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-300">
-          We now neutralise this by <span className="text-slate-100">anchoring the ML correction to the live baseline</span> (so the absolute offset can&apos;t leak in).
-          The clean long-term fix is to <span className="text-slate-100">retrain on DSCOVR → OMNI</span> so training and serving share the same instrument.
+          The current implementation limits constant-offset leakage by <span className="text-slate-100">anchoring the ML correction to the live baseline</span>.
+          Cross-spacecraft calibration and held-out transfer validation remain required before operational use.
         </p>
       </section>
     </main>

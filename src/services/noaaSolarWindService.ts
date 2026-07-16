@@ -39,298 +39,245 @@ export interface NoaaServiceResponse<T> {
   timeSeries: T[];
 }
 
-const NOAA_MAG_ENDPOINT = 'https://services.swpc.noaa.gov/products/solar-wind/mag-2-hour.json';
-const NOAA_PLASMA_ENDPOINT = 'https://services.swpc.noaa.gov/products/solar-wind/plasma-2-hour.json';
-const NOAA_EPHEMERIS_ENDPOINT = 'https://services.swpc.noaa.gov/products/solar-wind/ephemerides.json';
+const NOAA_RTSW_BASE_URL = 'https://services.swpc.noaa.gov/json/rtsw';
+const NOAA_MAG_ENDPOINT = `${NOAA_RTSW_BASE_URL}/rtsw_mag_1m.json`;
+const NOAA_PLASMA_ENDPOINT = `${NOAA_RTSW_BASE_URL}/rtsw_wind_1m.json`;
+const NOAA_EPHEMERIS_ENDPOINT = `${NOAA_RTSW_BASE_URL}/rtsw_ephemerides_1h.json`;
+const NOAA_FETCH_TIMEOUT_MS = 8_000;
 const NOAA_LIVE_WINDOW_MS = 2 * 60 * 60 * 1000;
 const NOAA_FUTURE_SAMPLE_TOLERANCE_MS = 5 * 60 * 1000;
-const NOAA_FETCH_TIMEOUT_MS = 8_000;
 
-function parseNoaaTimeTag(value: string | null | undefined) {
-  if (!value) {
+interface SelectedRtswRecord {
+  record: Record<string, unknown>;
+  timestampMs: number;
+  timeUtc: string;
+  active: boolean;
+  source: string;
+}
+
+interface RtswMinuteGroup {
+  minuteMs: number;
+  records: SelectedRtswRecord[];
+}
+
+function parseObservationTime(value: unknown): { timestampMs: number; timeUtc: string } | null {
+  if (typeof value !== 'string' || !value.trim()) {
     return null;
   }
 
-  const parsed = new Date(`${value.replace(' ', 'T')}Z`);
+  const trimmed = value.trim();
+  const normalized = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(trimmed)
+    ? trimmed
+    : `${trimmed.replace(' ', 'T')}Z`;
+  const timestampMs = new Date(normalized).getTime();
 
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return Number.isFinite(timestampMs)
+    ? { timestampMs, timeUtc: new Date(timestampMs).toISOString() }
+    : null;
 }
 
-function isInNoaaLiveWindow(value: string | null | undefined, nowMs = Date.now()) {
-  const parsed = parseNoaaTimeTag(value);
+function minuteBucket(timestampMs: number) {
+  return Math.floor(timestampMs / 60_000) * 60_000;
+}
 
-  if (!parsed) {
+function isActiveRecord(value: unknown) {
+  return value === true || value === 1 || value === 'true' || value === '1';
+}
+
+function recordSource(record: Record<string, unknown>) {
+  return typeof record.source === 'string' ? record.source.trim() : '';
+}
+
+function comparePreferredRecord(a: SelectedRtswRecord, b: SelectedRtswRecord) {
+  if (a.active !== b.active) {
+    return a.active ? -1 : 1;
+  }
+
+  if (a.timestampMs !== b.timestampMs) {
+    return b.timestampMs - a.timestampMs;
+  }
+
+  return a.source.localeCompare(b.source);
+}
+
+/**
+ * SWPC publishes one object per spacecraft. Collapse that multi-spacecraft stream
+ * into minute groups, ordered with the record SWPC marks as active first. Keeping
+ * the remaining records permits a field-level fallback when the active record has
+ * a null measurement.
+ */
+function groupRecordsByMinute(data: unknown): RtswMinuteGroup[] {
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  const grouped = new Map<number, SelectedRtswRecord[]>();
+
+  for (const value of data) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      continue;
+    }
+
+    const record = value as Record<string, unknown>;
+    const observation = parseObservationTime(record.time_tag);
+    if (!observation) {
+      continue;
+    }
+
+    const candidate: SelectedRtswRecord = {
+      record,
+      ...observation,
+      active: isActiveRecord(record.active),
+      source: recordSource(record),
+    };
+    const key = minuteBucket(candidate.timestampMs);
+    grouped.set(key, [...(grouped.get(key) ?? []), candidate]);
+  }
+
+  return [...grouped.entries()]
+    .map(([minuteMs, records]) => ({
+      minuteMs,
+      records: records.sort(comparePreferredRecord),
+    }))
+    .sort((a, b) => a.minuteMs - b.minuteMs);
+}
+
+function numericString(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) && Math.abs(parsed) < 1e30 ? String(value) : null;
+}
+
+function valueFromGroup(group: RtswMinuteGroup, field: string): string | null {
+  for (const { record } of group.records) {
+    const value = numericString(record[field]);
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function observationTime(group: RtswMinuteGroup) {
+  return group.records[0]?.timeUtc ?? null;
+}
+
+function isLiveGroup(group: RtswMinuteGroup, nowMs: number) {
+  const timestampMs = group.records[0]?.timestampMs;
+  if (timestampMs === undefined) {
     return false;
   }
 
-  const sampleAgeMs = nowMs - parsed.getTime();
-
-  return sampleAgeMs >= -NOAA_FUTURE_SAMPLE_TOLERANCE_MS
-    && sampleAgeMs <= NOAA_LIVE_WINDOW_MS;
+  const ageMs = nowMs - timestampMs;
+  return ageMs >= -NOAA_FUTURE_SAMPLE_TOLERANCE_MS && ageMs <= NOAA_LIVE_WINDOW_MS;
 }
 
-export async function fetchNoaaMagnetometerData(): Promise<NoaaServiceResponse<NoaaMagnetometerData>> {
-  try {
-    const response = await fetch(NOAA_MAG_ENDPOINT, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(NOAA_FETCH_TIMEOUT_MS),
-    });
-    
-    if (!response.ok) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'NOAA magnetometer unavailable',
-        latestData: null,
-        timeSeries: []
-      };
-    }
-
-    const data: string[][] = await response.json();
-
-    if (!Array.isArray(data) || data.length <= 1) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'No magnetometer data available',
-        latestData: null,
-        timeSeries: []
-      };
-    }
-
-    // Parse header
-    const header = data[0];
-    const timeIdx = header.indexOf('time_tag');
-    const bxIdx = header.indexOf('bx_gsm');
-    const byIdx = header.indexOf('by_gsm');
-    const bzIdx = header.indexOf('bz_gsm');
-    const lonIdx = header.indexOf('lon_gsm');
-    const latIdx = header.indexOf('lat_gsm');
-    const btIdx = header.indexOf('bt');
-
-    if (timeIdx === -1) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'Invalid data format',
-        latestData: null,
-        timeSeries: []
-      };
-    }
-
-    const timeSeries: NoaaMagnetometerData[] = [];
-    
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      timeSeries.push({
-        time_tag: row[timeIdx],
-        bx_gsm: bxIdx !== -1 ? row[bxIdx] : null,
-        by_gsm: byIdx !== -1 ? row[byIdx] : null,
-        bz_gsm: bzIdx !== -1 ? row[bzIdx] : null,
-        lon_gsm: lonIdx !== -1 ? row[lonIdx] : null,
-        lat_gsm: latIdx !== -1 ? row[latIdx] : null,
-        bt: btIdx !== -1 ? row[btIdx] : null,
-      });
-    }
-
-    // Get the latest valid row
-    const latestData = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : null;
-
-    return {
-      isConnected: true,
-      lastUpdated: new Date().toISOString(),
-      errorMessage: null,
-      latestData,
-      timeSeries
-    };
-
-  } catch {
-    return {
-      isConnected: false,
-      lastUpdated: null,
-      errorMessage: 'NOAA magnetometer unavailable',
-      latestData: null,
-      timeSeries: []
-    };
-  }
+function emptyResponse<T>(errorMessage: string): NoaaServiceResponse<T> {
+  return {
+    isConnected: false,
+    lastUpdated: null,
+    errorMessage,
+    latestData: null,
+    timeSeries: [],
+  };
 }
 
-export async function fetchNoaaPlasmaData(): Promise<NoaaServiceResponse<NoaaPlasmaData>> {
+async function fetchRtswProduct<T>(
+  endpoint: string,
+  unavailableMessage: string,
+  noDataMessage: string,
+  mapRecord: (group: RtswMinuteGroup) => T,
+  observationTime: (sample: T) => string,
+): Promise<NoaaServiceResponse<T>> {
   try {
-    const response = await fetch(NOAA_PLASMA_ENDPOINT, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(NOAA_FETCH_TIMEOUT_MS),
-    });
-    
-    if (!response.ok) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'NOAA plasma unavailable',
-        latestData: null,
-        timeSeries: []
-      };
-    }
-
-    const data: string[][] = await response.json();
-
-    if (!Array.isArray(data) || data.length <= 1) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'No plasma data available',
-        latestData: null,
-        timeSeries: []
-      };
-    }
-
-    const header = data[0];
-    const timeIdx = header.indexOf('time_tag');
-    const densityIdx = header.indexOf('density');
-    const speedIdx = header.indexOf('speed');
-    const tempIdx = header.indexOf('temperature');
-
-    if (timeIdx === -1) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'Invalid data format',
-        latestData: null,
-        timeSeries: []
-      };
-    }
-
-    const timeSeries: NoaaPlasmaData[] = [];
-    
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      timeSeries.push({
-        time_tag: row[timeIdx],
-        density: densityIdx !== -1 ? row[densityIdx] : null,
-        speed: speedIdx !== -1 ? row[speedIdx] : null,
-        temperature: tempIdx !== -1 ? row[tempIdx] : null,
-      });
-    }
-
-    const latestData = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : null;
-
-    return {
-      isConnected: true,
-      lastUpdated: new Date().toISOString(),
-      errorMessage: null,
-      latestData,
-      timeSeries
-    };
-
-  } catch {
-    return {
-      isConnected: false,
-      lastUpdated: null,
-      errorMessage: 'NOAA plasma unavailable',
-      latestData: null,
-      timeSeries: []
-    };
-  }
-}
-
-export async function fetchNoaaEphemerisData(): Promise<NoaaServiceResponse<NoaaEphemerisData>> {
-  try {
-    const response = await fetch(NOAA_EPHEMERIS_ENDPOINT, {
+    const response = await fetch(endpoint, {
       cache: 'no-store',
       signal: AbortSignal.timeout(NOAA_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'NOAA spacecraft ephemeris unavailable',
-        latestData: null,
-        timeSeries: []
-      };
+      return emptyResponse(unavailableMessage);
     }
 
-    const data: string[][] = await response.json();
-
-    if (!Array.isArray(data) || data.length <= 1) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'No spacecraft ephemeris available',
-        latestData: null,
-        timeSeries: []
-      };
+    const groups = groupRecordsByMinute(await response.json())
+      .filter(group => isLiveGroup(group, Date.now()));
+    if (groups.length === 0) {
+      return emptyResponse(noDataMessage);
     }
 
-    const header = data[0];
-    const timeIdx = header.indexOf('time_tag');
-    const xGseIdx = header.indexOf('x_gse');
-    const yGseIdx = header.indexOf('y_gse');
-    const zGseIdx = header.indexOf('z_gse');
-    const vxGseIdx = header.indexOf('vx_gse');
-    const vyGseIdx = header.indexOf('vy_gse');
-    const vzGseIdx = header.indexOf('vz_gse');
-    const xGsmIdx = header.indexOf('x_gsm');
-    const yGsmIdx = header.indexOf('y_gsm');
-    const zGsmIdx = header.indexOf('z_gsm');
-    const vxGsmIdx = header.indexOf('vx_gsm');
-    const vyGsmIdx = header.indexOf('vy_gsm');
-    const vzGsmIdx = header.indexOf('vz_gsm');
-
-    if (timeIdx === -1) {
-      return {
-        isConnected: false,
-        lastUpdated: null,
-        errorMessage: 'Invalid ephemeris format',
-        latestData: null,
-        timeSeries: []
-      };
-    }
-
-    const timeSeries: NoaaEphemerisData[] = [];
-    const nowMs = Date.now();
-
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      const timeTag = row[timeIdx];
-
-      if (!isInNoaaLiveWindow(timeTag, nowMs)) {
-        continue;
-      }
-
-      timeSeries.push({
-        time_tag: timeTag,
-        x_gse: xGseIdx !== -1 ? row[xGseIdx] : null,
-        y_gse: yGseIdx !== -1 ? row[yGseIdx] : null,
-        z_gse: zGseIdx !== -1 ? row[zGseIdx] : null,
-        vx_gse: vxGseIdx !== -1 ? row[vxGseIdx] : null,
-        vy_gse: vyGseIdx !== -1 ? row[vyGseIdx] : null,
-        vz_gse: vzGseIdx !== -1 ? row[vzGseIdx] : null,
-        x_gsm: xGsmIdx !== -1 ? row[xGsmIdx] : null,
-        y_gsm: yGsmIdx !== -1 ? row[yGsmIdx] : null,
-        z_gsm: zGsmIdx !== -1 ? row[zGsmIdx] : null,
-        vx_gsm: vxGsmIdx !== -1 ? row[vxGsmIdx] : null,
-        vy_gsm: vyGsmIdx !== -1 ? row[vyGsmIdx] : null,
-        vz_gsm: vzGsmIdx !== -1 ? row[vzGsmIdx] : null,
-      });
-    }
-
-    const latestData = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : null;
+    const timeSeries = groups.map(mapRecord);
+    const latestData = timeSeries[timeSeries.length - 1] ?? null;
 
     return {
-      isConnected: true,
-      lastUpdated: new Date().toISOString(),
+      isConnected: latestData !== null,
+      lastUpdated: latestData ? observationTime(latestData) : null,
       errorMessage: null,
       latestData,
-      timeSeries
+      timeSeries,
     };
   } catch {
-    return {
-      isConnected: false,
-      lastUpdated: null,
-      errorMessage: 'NOAA spacecraft ephemeris unavailable',
-      latestData: null,
-      timeSeries: []
-    };
+    return emptyResponse(unavailableMessage);
   }
+}
+
+export function fetchNoaaMagnetometerData(): Promise<NoaaServiceResponse<NoaaMagnetometerData>> {
+  return fetchRtswProduct(
+    NOAA_MAG_ENDPOINT,
+    'NOAA magnetometer unavailable',
+    'No magnetometer data available',
+    group => ({
+      time_tag: observationTime(group) as string,
+      bx_gsm: valueFromGroup(group, 'bx_gsm'),
+      by_gsm: valueFromGroup(group, 'by_gsm'),
+      bz_gsm: valueFromGroup(group, 'bz_gsm'),
+      // The object feed renamed the legacy angular columns to phi/theta.
+      lon_gsm: valueFromGroup(group, 'phi_gsm'),
+      lat_gsm: valueFromGroup(group, 'theta_gsm'),
+      bt: valueFromGroup(group, 'bt'),
+    }),
+    sample => sample.time_tag,
+  );
+}
+
+export function fetchNoaaPlasmaData(): Promise<NoaaServiceResponse<NoaaPlasmaData>> {
+  return fetchRtswProduct(
+    NOAA_PLASMA_ENDPOINT,
+    'NOAA plasma unavailable',
+    'No plasma data available',
+    group => ({
+      time_tag: observationTime(group) as string,
+      density: valueFromGroup(group, 'proton_density'),
+      speed: valueFromGroup(group, 'proton_speed'),
+      temperature: valueFromGroup(group, 'proton_temperature'),
+    }),
+    sample => sample.time_tag,
+  );
+}
+
+export function fetchNoaaEphemerisData(): Promise<NoaaServiceResponse<NoaaEphemerisData>> {
+  return fetchRtswProduct(
+    NOAA_EPHEMERIS_ENDPOINT,
+    'NOAA spacecraft ephemeris unavailable',
+    'No spacecraft ephemeris available',
+    group => ({
+      time_tag: observationTime(group) as string,
+      x_gse: valueFromGroup(group, 'x_gse'),
+      y_gse: valueFromGroup(group, 'y_gse'),
+      z_gse: valueFromGroup(group, 'z_gse'),
+      vx_gse: valueFromGroup(group, 'vx_gse'),
+      vy_gse: valueFromGroup(group, 'vy_gse'),
+      vz_gse: valueFromGroup(group, 'vz_gse'),
+      x_gsm: valueFromGroup(group, 'x_gsm'),
+      y_gsm: valueFromGroup(group, 'y_gsm'),
+      z_gsm: valueFromGroup(group, 'z_gsm'),
+      vx_gsm: valueFromGroup(group, 'vx_gsm'),
+      vy_gsm: valueFromGroup(group, 'vy_gsm'),
+      vz_gsm: valueFromGroup(group, 'vz_gsm'),
+    }),
+    sample => sample.time_tag,
+  );
 }

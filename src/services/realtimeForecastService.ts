@@ -45,9 +45,9 @@ const SOURCE: ForecastSourceV1 = {
   provider: 'NOAA SWPC',
   observatory: 'L1 upstream monitor',
   products: [
-    'solar-wind/mag-7-day.json',
-    'solar-wind/plasma-7-day.json',
-    'solar-wind/ephemerides.json',
+    'json/rtsw/rtsw_mag_1m.json',
+    'json/rtsw/rtsw_wind_1m.json',
+    'json/rtsw/rtsw_ephemerides_1h.json',
   ],
 };
 

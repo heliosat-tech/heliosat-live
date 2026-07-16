@@ -4,17 +4,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Clock } from 'lucide-react';
 import { AdminIndicator } from '../auth/AdminIndicator';
 import { AuthControls } from '../auth/AuthControls';
+import {
+  SOURCE_STATUS_LABEL,
+  summarizeSourceStatuses,
+  type SourceStatus,
+} from './sourceStatus';
 
-// A live data source surfaced in the consolidated "Data sources" dropdown. Adding a new feed
-// (another mission, GOES, IMAP, …) is just one more entry in the array page.tsx builds.
-export interface SourceStatus {
-  name: string;
-  connected: boolean;
-  partial?: boolean;
-  /** Connected, but serving a cached/last-good snapshot because the source was unreachable. */
-  stale?: boolean;
-  lastUpdated: string | null;
-}
+export type { SourceStatus } from './sourceStatus';
 
 interface TopStatusBarProps {
   sources: SourceStatus[];
@@ -111,11 +107,12 @@ const ClockMenu: React.FC<{ now: Date | null; tzId: string; onSelect: (id: strin
 
 const SourcesMenu: React.FC<{ sources: SourceStatus[]; tzId: string }> = ({ sources, tzId }) => {
   const { open, setOpen, ref } = useDropdown();
-  const connectedCount = sources.filter(source => source.connected).length;
-  const anyDown = sources.some(source => !source.connected);
-  // Amber = connected but degraded: a partial feed or a cached/last-good snapshot.
-  const anyAmber = sources.some(source => source.connected && (source.partial || source.stale));
-  const overallDot = anyDown ? 'bg-red-500' : anyAmber ? 'bg-amber-400' : 'bg-cyan-400';
+  const summary = summarizeSourceStatuses(sources);
+  const overallDot = summary.tone === 'offline'
+    ? 'bg-red-500'
+    : summary.tone === 'connected'
+      ? 'bg-cyan-400'
+      : 'bg-amber-400';
 
   return (
     <div className="relative" ref={ref}>
@@ -125,9 +122,11 @@ const SourcesMenu: React.FC<{ sources: SourceStatus[]; tzId: string }> = ({ sour
         className="flex items-center gap-2 rounded-md border border-slate-700/60 bg-slate-800/30 px-3 py-1.5 text-xs transition-colors hover:border-slate-600"
         aria-expanded={open}
       >
-        <span className={`h-2 w-2 rounded-full ${overallDot} ${!anyDown && !anyAmber ? 'animate-pulse' : ''}`} />
+        <span className={`h-2 w-2 rounded-full ${overallDot} ${summary.tone === 'connected' || summary.tone === 'checking' ? 'animate-pulse' : ''}`} />
         <span className="text-slate-300">Data sources</span>
-        <span className="font-mono text-[10px] text-slate-500">{connectedCount}/{sources.length}</span>
+        <span className="font-mono text-[10px] text-slate-500" aria-live="polite">
+          {summary.availableCount}/{summary.totalCount}
+        </span>
         <ChevronDown className="h-3 w-3 text-slate-500" aria-hidden="true" />
       </button>
 
@@ -135,21 +134,37 @@ const SourcesMenu: React.FC<{ sources: SourceStatus[]; tzId: string }> = ({ sour
         <div className="absolute right-0 top-full z-[120] mt-2 w-80 rounded-md border border-slate-700 bg-slate-950 p-1.5 shadow-xl">
           <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-widest text-slate-500">Live data sources · last update</div>
           {sources.map(source => {
-            // Amber for a degraded-but-connected feed: partial coverage, or a cached snapshot
-            // served because the source was unreachable.
-            const amber = source.connected && (source.partial || source.stale);
-            const label = !source.connected ? 'Offline' : source.partial ? 'Partial' : source.stale ? 'Cached' : 'Connected';
+            const degraded = source.status === 'partial' || source.status === 'cached';
+            const checking = source.status === 'checking';
+            const offline = source.status === 'offline';
+            const dotColor = offline
+              ? 'bg-red-500/70'
+              : source.status === 'connected'
+                ? 'bg-cyan-400'
+                : 'bg-amber-400';
+            const labelColor = offline
+              ? 'text-red-400/80'
+              : degraded || checking
+                ? 'text-amber-300'
+                : 'text-slate-400';
             return (
-              <div key={source.name} className="flex items-center justify-between gap-3 rounded px-2 py-1.5">
+              <div
+                key={source.id}
+                className="flex items-center justify-between gap-3 rounded px-2 py-1.5"
+                title={source.detail ?? undefined}
+                aria-label={`${source.name}: ${SOURCE_STATUS_LABEL[source.status]}${source.detail ? `. ${source.detail}` : ''}`}
+              >
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className={`h-2 w-2 flex-shrink-0 rounded-full ${source.connected ? (amber ? 'bg-amber-400' : 'bg-cyan-400') : 'bg-red-500/70'}`} />
+                  <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dotColor} ${checking ? 'animate-pulse' : ''}`} />
                   <span className="truncate text-xs text-slate-200">{source.name}</span>
                 </div>
                 <div className="flex flex-shrink-0 items-center gap-2">
-                  <span className={`font-mono text-[10px] ${source.connected ? (amber ? 'text-amber-300' : 'text-slate-400') : 'text-red-400/80'}`}>
-                    {label}
+                  <span className={`font-mono text-[10px] ${labelColor}`}>
+                    {SOURCE_STATUS_LABEL[source.status]}
                   </span>
-                  <span className="w-12 text-right font-mono text-[10px] text-slate-600">{formatUpdated(source.lastUpdated, tzId)}</span>
+                  <span className="w-12 text-right font-mono text-[10px] text-slate-600">
+                    {checking ? 'pending' : formatUpdated(source.lastUpdated, tzId)}
+                  </span>
                 </div>
               </div>
             );
