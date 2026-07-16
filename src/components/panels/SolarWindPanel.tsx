@@ -52,7 +52,7 @@ export const SolarWindPanel: React.FC<SolarWindPanelProps> = ({ noaaMagData, noa
                       Active RTSW spacecraft
                     </div>
                     <div className="text-[9px] font-mono text-slate-500">
-                      NOAA active feed · DSCOVR default / ACE fallback
+                      NOAA multi-spacecraft feed · active record selected by SWPC
                     </div>
                   </div>
                 </div>
@@ -89,9 +89,9 @@ export const SolarWindPanel: React.FC<SolarWindPanelProps> = ({ noaaMagData, noa
               <div className="flex items-center gap-2">
                 <Radio className="h-4 w-4 flex-shrink-0 text-slate-500" aria-hidden="true" />
                 <div>
-                  <div className="text-[11px] font-mono font-semibold text-slate-300">ACE fallback source</div>
+                  <div className="text-[11px] font-mono font-semibold text-slate-300">Official same-minute fallback</div>
                   <div className="text-[9px] font-mono text-slate-600">
-                    NOAA can switch RTSW to ACE during DSCOVR outages. The JSON feed used here does not expose a separate ACE-only current reading.
+                    If an active record has a null variable, another official RTSW spacecraft record from that minute may fill only that missing field.
                   </div>
                 </div>
               </div>

@@ -108,7 +108,7 @@ export const SunEarthView: React.FC<SunEarthViewProps> = ({ noaaMagData, noaaPla
           <circle cx="515" cy="135" r="6" fill="#fbbf24" opacity="0.8" />
           <circle cx="515" cy="135" r="14" fill="none" stroke="#fbbf24" strokeWidth="0.9" strokeDasharray="4 4" opacity="0.5" />
           <rect x="477" y="93" width="76" height="20" rx="4" fill="#0f172a" stroke="#334155" strokeWidth="0.8" />
-          <text x="515" y="107" textAnchor="middle" fill="#bae6fd" fontSize="9" fontFamily="monospace">DSCOVR / ACE</text>
+          <text x="515" y="107" textAnchor="middle" fill="#bae6fd" fontSize="9" fontFamily="monospace">SWPC ACTIVE</text>
           <text x="515" y="166" textAnchor="middle" fill="#fbbf24" fontSize="10" fontFamily="monospace" fontWeight="700">L1</text>
 
           <circle cx="704" cy="135" r="47" fill="url(#earthBody)" />
@@ -122,7 +122,7 @@ export const SunEarthView: React.FC<SunEarthViewProps> = ({ noaaMagData, noaaPla
         <section className="min-w-0">
           <div className="mb-2 text-[9px] uppercase tracking-widest text-cyan-500/80">RTSW Source</div>
           <div className="grid grid-cols-2 gap-2">
-            <Metric label="Spacecraft" value="DSCOVR/ACE" />
+            <Metric label="Spacecraft" value="SWPC active" />
             <Metric label="Time" value={ephemeris?.time_tag} />
             <Metric label="X GSE" value={formatKm(ephemeris?.x_gse)} unit="km" />
             <Metric label="Y GSE" value={formatKm(ephemeris?.y_gse)} unit="km" />

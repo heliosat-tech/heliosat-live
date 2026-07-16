@@ -1,6 +1,7 @@
 import { AppShell } from '@/components/layout/AppShell';
 import { ExpandableMissionWidget, ResizableMissionLayout } from '@/components/layout/ResizableMissionLayout';
-import { TopStatusBar, type SourceStatus } from '@/components/layout/TopStatusBar';
+import { DashboardSourceStatusBridge } from '@/components/layout/DashboardSourceStatusBridge';
+import { classifyL1SourceStatus, type SourceStatus } from '@/components/layout/sourceStatus';
 import { MissionHeadlineBar } from '@/components/panels/MissionHeadlineBar';
 import { L1PropagationPanel, ArrivalHeatmapPanel } from '@/components/panels/L1ForecastPanel';
 import { SatelliteWatchlistPanel } from '@/components/panels/SatelliteWatchlistPanel';
@@ -53,26 +54,50 @@ export default async function Home() {
     fetchNoaaStormScales(),
   ]);
 
-  const isNoaaConnected = noaaMagData.isConnected || noaaPlasmaData.isConnected;
-  const magTime = noaaMagData.lastUpdated ? new Date(noaaMagData.lastUpdated).getTime() : 0;
-  const plasmaTime = noaaPlasmaData.lastUpdated ? new Date(noaaPlasmaData.lastUpdated).getTime() : 0;
-  const lastUpdated = magTime > plasmaTime ? noaaMagData.lastUpdated : (plasmaTime > 0 ? noaaPlasmaData.lastUpdated : null);
-  const partialAvailability = (noaaMagData.isConnected && !noaaPlasmaData.isConnected) || (!noaaMagData.isConnected && noaaPlasmaData.isConnected);
+  const magneticAvailable = l1ForecastData.latest.bt !== null || l1ForecastData.latest.bz !== null;
+  const plasmaAvailable = l1ForecastData.latest.speed !== null || l1ForecastData.latest.density !== null;
+  const l1Status = classifyL1SourceStatus({
+    sampleTimeUtc: l1ForecastData.latest.sampleTimeUtc,
+    freshness: l1ForecastData.freshness,
+    magneticAvailable,
+    plasmaAvailable,
+  });
 
-  // One extensible list of the live feeds, shown in the header's "Data sources" dropdown.
+  // Server snapshot for NOAA-backed sources. CelesTrak is appended by the client bridge so
+  // the one existing catalog fetch can reconcile a time-capped SSR result after hydration.
   const sources: SourceStatus[] = [
-    { name: 'NOAA Solar Wind (RTSW)', connected: isNoaaConnected, partial: partialAvailability, lastUpdated },
-    { name: 'NOAA Alerts', connected: noaaAlertsData.isConnected, lastUpdated: noaaAlertsData.lastUpdated },
-    { name: 'NOAA Storm Scales (G/S/R)', connected: stormScalesData.observed !== null, lastUpdated: stormScalesData.observed?.observedAtUtc ?? stormScalesData.fetchedAtUtc },
-    { name: 'CelesTrak (TLE)', connected: celestrakData.isConnected, stale: celestrakData.stale, lastUpdated: celestrakData.lastUpdated },
+    {
+      id: 'l1-solar-wind',
+      name: 'L1 Solar Wind',
+      status: l1Status,
+      lastUpdated: l1ForecastData.latest.sampleTimeUtc,
+      detail: l1ForecastData.sourceLabel ? `Live source: ${l1ForecastData.sourceLabel}` : l1ForecastData.warnings[0] ?? null,
+    },
+    {
+      id: 'noaa-alerts',
+      name: 'NOAA Alerts',
+      status: noaaAlertsData.isConnected ? 'connected' : 'offline',
+      lastUpdated: noaaAlertsData.lastUpdated,
+      detail: noaaAlertsData.errorMessage,
+    },
+    {
+      id: 'noaa-storm-scales',
+      name: 'NOAA Storm Scales (G/S/R)',
+      status: stormScalesData.observed === null
+        ? 'offline'
+        : stormScalesData.observed.observedAtUtc
+          ? 'connected'
+          : 'partial',
+      lastUpdated: stormScalesData.observed?.observedAtUtc ?? null,
+      detail: stormScalesData.errorMessage,
+    },
   ];
 
   return (
     <AppShell>
-      <TopStatusBar sources={sources} />
-
       <SatelliteSelectionProvider>
         <SatelliteConfigProvider initialTleData={celestrakData}>
+          <DashboardSourceStatusBridge sources={sources} />
           <SatelliteWatchProvider>
             {/* Persists tracked satellites + instruments/thresholds to Supabase per account. */}
             <DashboardSync />
@@ -197,7 +222,6 @@ export default async function Home() {
                         noaaMagData={noaaMagData}
                         noaaPlasmaData={noaaPlasmaData}
                         noaaAlertsData={noaaAlertsData}
-                        celestrakData={celestrakData}
                       />
                     </div>
                     <div className="min-h-[300px]">

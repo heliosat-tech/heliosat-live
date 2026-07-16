@@ -2,8 +2,8 @@
  * Shared types for the multi-source live L1 connector.
  *
  * Raw L1 solar wind reaches us through two largely independent real-time
- * pipelines — NOAA SWPC (new multi-spacecraft RTSW JSON, with the legacy product
- * feed as a fallback until it retires ~2026-06-30) and NASA IMAP I-ALiRT (its own
+ * pipelines — NOAA SWPC (current multi-spacecraft RTSW JSON object products) and
+ * NASA IMAP I-ALiRT (its own
  * ground path). Each connector normalizes to the SAME internal sample schema so a
  * single selection layer can pick the freshest valid sample per poll and report
  * which source is live.

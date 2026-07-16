@@ -1,22 +1,16 @@
 /**
- * NOAA SWPC connector.
+ * Canonical NOAA SWPC RTSW connector.
  *
- * Primary: the new multi-spacecraft RTSW JSON under services.swpc.noaa.gov/json/rtsw/
- * (mag / wind / ephemerides as separate files, each an ARRAY OF OBJECTS carrying
- * every available spacecraft tagged with `source` and an `active` flag — SWPC's
- * designated source for that data type, which it can switch at any time and which
- * can differ between mag and plasma). We never hardcode the spacecraft: active
- * records are preferred per variable, with any other available spacecraft as a
- * same-feed fallback.
- *
- * Fallback: the legacy `/products/solar-wind/*-7-day.json` products (header + rows),
- * kept until that endpoint retires (~2026-06-30).
+ * The three `/json/rtsw/` products are arrays of spacecraft-tagged objects. Each
+ * minute is resolved independently: SWPC's `active` record has first choice for
+ * every physical variable, while another official record from that same minute
+ * may fill a null field. Products are fetched independently so a missing magnetic,
+ * wind, or ephemeris file does not discard usable data from the others.
  */
 
 import type { PhysicalDriverCandidate } from '../physicalDriverResolutionService';
 import {
   NOMINAL_L1_DISTANCE_KM,
-  minuteKey,
   parseMs,
   reliableDistanceKm,
   resolveSamples,
@@ -25,45 +19,54 @@ import {
 import type { L1SourceResult, ScPositionGseKm } from './types';
 
 const RTSW_BASE = 'https://services.swpc.noaa.gov/json/rtsw';
-const MAG_NEW = `${RTSW_BASE}/rtsw_mag_1m.json`;
-const WIND_NEW = `${RTSW_BASE}/rtsw_wind_1m.json`;
-const EPHEM_NEW = `${RTSW_BASE}/rtsw_ephemerides_1h.json`;
+const MAG_URL = `${RTSW_BASE}/rtsw_mag_1m.json`;
+const WIND_URL = `${RTSW_BASE}/rtsw_wind_1m.json`;
+const EPHEMERIS_URL = `${RTSW_BASE}/rtsw_ephemerides_1h.json`;
+const REQUEST_TIMEOUT_MS = 12_000;
+const SELECTED_RECORD_PRIORITY = 1;
+const ACTIVE_LABEL_WINDOW_MS = 10 * 60 * 1000;
 
-const MAG_LEGACY = 'https://services.swpc.noaa.gov/products/solar-wind/mag-7-day.json';
-const PLASMA_LEGACY = 'https://services.swpc.noaa.gov/products/solar-wind/plasma-7-day.json';
-const EPHEM_LEGACY = 'https://services.swpc.noaa.gov/products/solar-wind/ephemerides.json';
+interface RtswRecord {
+  record: Record<string, unknown>;
+  timestampMs: number;
+  active: boolean;
+  source: string;
+}
 
-const REQUEST_TIMEOUT_MS = 12000;
-// Active records sort ahead of any other spacecraft from the same feed.
-const PRIORITY_ACTIVE = 1;
-const PRIORITY_AVAILABLE = 2;
+interface RtswMinuteGroup {
+  minuteMs: number;
+  records: RtswRecord[];
+}
+
+interface BuiltRtswFeed {
+  candidates: PhysicalDriverCandidate[];
+  distanceKm: number;
+  distanceIsMeasured: boolean;
+  scPositionGseKm: ScPositionGseKm | null;
+  byByMinute: Map<number, number>;
+  label: string;
+  magMinutes: number;
+  windMinutes: number;
+  ephemerisMinutes: number;
+}
 
 async function fetchJson(url: string): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   try {
     const response = await fetch(url, { cache: 'no-store', signal: controller.signal });
-    if (!response.ok) throw new Error(`SWPC request failed with ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`SWPC request failed with ${response.status}`);
+    }
     return await response.json();
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-/** "products" arrays are [header, ...rows]; build a column index map. */
-function columnIndex(table: unknown[]): Record<string, number> {
-  const header = table[0];
-  const map: Record<string, number> = {};
-  if (Array.isArray(header)) {
-    header.forEach((name, index) => {
-      if (typeof name === 'string') map[name] = index;
-    });
-  }
-  return map;
+function isActiveRecord(value: unknown) {
+  return value === true || value === 1 || value === 'true' || value === '1';
 }
 
 function recordSource(record: Record<string, unknown>): string {
@@ -71,273 +74,263 @@ function recordSource(record: Record<string, unknown>): string {
   return typeof source === 'string' && source.trim() ? source.trim() : 'unknown';
 }
 
-// SWPC can switch the designated active spacecraft at any time, so the 24 h feed
-// holds active records from more than one. The live label is the spacecraft(s)
-// active in this trailing window of the newest active record.
-const ACTIVE_LABEL_WINDOW_MS = 10 * 60 * 1000;
+function minuteBucket(timestampMs: number) {
+  return Math.floor(timestampMs / 60_000) * 60_000;
+}
 
-function swpcLabel(activeAt: Array<{ source: string; ms: number }>, latestAnySource: string | null): string {
-  if (activeAt.length) {
+function comparePreferredRecord(a: RtswRecord, b: RtswRecord) {
+  if (a.active !== b.active) {
+    return a.active ? -1 : 1;
+  }
+
+  if (a.timestampMs !== b.timestampMs) {
+    return b.timestampMs - a.timestampMs;
+  }
+
+  return a.source.localeCompare(b.source);
+}
+
+function groupRecordsByMinute(raw: unknown): RtswMinuteGroup[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const grouped = new Map<number, RtswRecord[]>();
+
+  for (const value of raw) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      continue;
+    }
+
+    const record = value as Record<string, unknown>;
+    const timestampMs = parseMs(record.time_tag);
+    if (!Number.isFinite(timestampMs)) {
+      continue;
+    }
+
+    const minuteMs = minuteBucket(timestampMs);
+    const candidate: RtswRecord = {
+      record,
+      timestampMs,
+      active: isActiveRecord(record.active),
+      source: recordSource(record),
+    };
+    grouped.set(minuteMs, [...(grouped.get(minuteMs) ?? []), candidate]);
+  }
+
+  return [...grouped.entries()]
+    .map(([minuteMs, records]) => ({
+      minuteMs,
+      records: records.sort(comparePreferredRecord),
+    }))
+    .sort((a, b) => a.minuteMs - b.minuteMs);
+}
+
+function swpcLabel(activeAt: Array<{ source: string; ms: number }>, latestAnySource: string | null) {
+  if (activeAt.length > 0) {
     const newestActiveMs = Math.max(...activeAt.map(entry => entry.ms));
-    const current = [...new Set(activeAt.filter(entry => entry.ms >= newestActiveMs - ACTIVE_LABEL_WINDOW_MS).map(entry => entry.source))].sort();
+    const current = [
+      ...new Set(
+        activeAt
+          .filter(entry => entry.ms >= newestActiveMs - ACTIVE_LABEL_WINDOW_MS)
+          .map(entry => entry.source),
+      ),
+    ].sort();
     return `SWPC · ${current.join('/')}`;
   }
+
   return latestAnySource ? `SWPC · ${latestAnySource} (no active flag)` : 'SWPC RTSW';
 }
 
-// ---------------------------------------------------------------- new feed ---
-
-function buildFromNewFeed(magRaw: unknown, windRaw: unknown, ephemRaw: unknown): {
-  candidates: PhysicalDriverCandidate[];
-  distanceKm: number;
-  distanceIsMeasured: boolean;
-  scPositionGseKm: ScPositionGseKm | null;
-  byByMinute: Map<number, number>;
-  label: string;
-} | null {
-  const mag = asArray(magRaw).filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null);
-  const wind = asArray(windRaw).filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null);
-  if (!mag.length && !wind.length) return null;
-
+function buildFromRtswFeed(magRaw: unknown, windRaw: unknown, ephemerisRaw: unknown): BuiltRtswFeed {
+  const magGroups = groupRecordsByMinute(magRaw);
+  const windGroups = groupRecordsByMinute(windRaw);
+  const ephemerisGroups = groupRecordsByMinute(ephemerisRaw);
   const candidates: PhysicalDriverCandidate[] = [];
+  const byByMinute = new Map<number, number>();
   const activeAt: Array<{ source: string; ms: number }> = [];
-  // By GSM is not a resolver variable; track it active-preferred per minute alongside.
-  const byAt = new Map<number, { value: number; active: boolean }>();
   let latestAnySource: string | null = null;
   let latestAnyMs = -Infinity;
 
-  const note = (source: string, ms: number, isActive: boolean) => {
-    if (isActive) activeAt.push({ source, ms });
-    if (ms > latestAnyMs) { latestAnyMs = ms; latestAnySource = source; }
+  const noteRecord = (record: RtswRecord) => {
+    if (record.active) {
+      activeAt.push({ source: record.source, ms: record.timestampMs });
+    }
+    if (record.timestampMs > latestAnyMs) {
+      latestAnyMs = record.timestampMs;
+      latestAnySource = record.source;
+    }
   };
 
-  for (const record of mag) {
-    const ms = parseMs(record.time_tag);
-    if (Number.isNaN(ms)) continue;
-    const source = recordSource(record);
-    const isActive = record.active === true;
-    note(source, ms, isActive);
-    const key = minuteKey(ms);
-    const byValue = toNum(record.by_gsm);
-    if (byValue !== null) {
-      const existing = byAt.get(key);
-      if (!existing || (isActive && !existing.active)) byAt.set(key, { value: byValue, active: isActive });
-    }
-    candidates.push({
-      timeMs: key,
-      observedMs: ms,
-      sourceId: 'swpc_rtsw',
-      sourceLabel: `SWPC · ${source}`,
-      priority: isActive ? PRIORITY_ACTIVE : PRIORITY_AVAILABLE,
-      bzGsmNt: toNum(record.bz_gsm),
-      btNt: toNum(record.bt),
-    });
-  }
+  for (const group of magGroups) {
+    for (const selected of group.records) {
+      noteRecord(selected);
+      const bzGsmNt = toNum(selected.record.bz_gsm);
+      const btNt = toNum(selected.record.bt);
+      const byGsmNt = toNum(selected.record.by_gsm);
 
-  for (const record of wind) {
-    const ms = parseMs(record.time_tag);
-    if (Number.isNaN(ms)) continue;
-    const source = recordSource(record);
-    const isActive = record.active === true;
-    note(source, ms, isActive);
-    candidates.push({
-      timeMs: minuteKey(ms),
-      observedMs: ms,
-      sourceId: 'swpc_rtsw',
-      sourceLabel: `SWPC · ${source}`,
-      priority: isActive ? PRIORITY_ACTIVE : PRIORITY_AVAILABLE,
-      speedKmS: toNum(record.proton_speed),
-      densityCm3: toNum(record.proton_density),
-    });
-  }
-
-  // Position from the active ephemeris record, else the newest available one.
-  const ephem = asArray(ephemRaw).filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null);
-  let distanceKm = NOMINAL_L1_DISTANCE_KM;
-  let distanceIsMeasured = false;
-  let scPositionGseKm: ScPositionGseKm | null = null;
-  let bestEphemMs = -Infinity;
-  let bestEphemActive = false;
-  for (const record of ephem) {
-    const ms = parseMs(record.time_tag);
-    if (Number.isNaN(ms)) continue;
-    const isActive = record.active === true;
-    // Prefer an active record; among equal activeness, the newest.
-    const better = (isActive && !bestEphemActive) || ((isActive === bestEphemActive) && ms > bestEphemMs);
-    if (!better) continue;
-    const x = toNum(record.x_gse);
-    const y = toNum(record.y_gse);
-    const z = toNum(record.z_gse);
-    const measured = reliableDistanceKm(x, y, z);
-    if (measured === null) continue;
-    distanceKm = measured;
-    distanceIsMeasured = true;
-    scPositionGseKm = { x: x as number, y: y as number, z: z as number };
-    bestEphemMs = ms;
-    bestEphemActive = isActive;
-  }
-
-  const byByMinute = new Map<number, number>();
-  for (const [key, entry] of byAt) byByMinute.set(key, entry.value);
-
-  return { candidates, distanceKm, distanceIsMeasured, scPositionGseKm, byByMinute, label: swpcLabel(activeAt, latestAnySource) };
-}
-
-// ------------------------------------------------------------- legacy feed ---
-
-function buildFromLegacy(magRaw: unknown, plasmaRaw: unknown, ephemRaw: unknown): {
-  candidates: PhysicalDriverCandidate[];
-  distanceKm: number;
-  distanceIsMeasured: boolean;
-  scPositionGseKm: ScPositionGseKm | null;
-} | null {
-  const mag = asArray(magRaw);
-  const plasma = asArray(plasmaRaw);
-  if (mag.length <= 1 && plasma.length <= 1) return null;
-
-  const magCols = columnIndex(mag);
-  const plasmaCols = columnIndex(plasma);
-  const bzIdx = magCols.bz_gsm ?? -1;
-  const btIdx = magCols.bt ?? -1;
-  const speedIdx = plasmaCols.speed ?? -1;
-  const densityIdx = plasmaCols.density ?? -1;
-
-  const candidates: PhysicalDriverCandidate[] = [];
-  for (let i = 1; i < mag.length; i += 1) {
-    const row = mag[i];
-    if (!Array.isArray(row)) continue;
-    const ms = parseMs(row[0]);
-    if (Number.isNaN(ms)) continue;
-    candidates.push({
-      timeMs: minuteKey(ms),
-      observedMs: ms,
-      sourceId: 'swpc_legacy',
-      sourceLabel: 'SWPC · legacy RTSW',
-      priority: PRIORITY_ACTIVE,
-      bzGsmNt: bzIdx >= 0 ? toNum(row[bzIdx]) : null,
-      btNt: btIdx >= 0 ? toNum(row[btIdx]) : null,
-    });
-  }
-  for (let i = 1; i < plasma.length; i += 1) {
-    const row = plasma[i];
-    if (!Array.isArray(row)) continue;
-    const ms = parseMs(row[0]);
-    if (Number.isNaN(ms)) continue;
-    candidates.push({
-      timeMs: minuteKey(ms),
-      observedMs: ms,
-      sourceId: 'swpc_legacy',
-      sourceLabel: 'SWPC · legacy RTSW',
-      priority: PRIORITY_ACTIVE,
-      speedKmS: speedIdx >= 0 ? toNum(row[speedIdx]) : null,
-      densityCm3: densityIdx >= 0 ? toNum(row[densityIdx]) : null,
-    });
-  }
-
-  const ephem = asArray(ephemRaw);
-  const ephemCols = columnIndex(ephem);
-  const xi = ephemCols.x_gse ?? -1;
-  const yi = ephemCols.y_gse ?? -1;
-  const zi = ephemCols.z_gse ?? -1;
-  let distanceKm = NOMINAL_L1_DISTANCE_KM;
-  let distanceIsMeasured = false;
-  let scPositionGseKm: ScPositionGseKm | null = null;
-  if (xi >= 0 && yi >= 0 && zi >= 0 && ephem.length > 1) {
-    const last = ephem[ephem.length - 1];
-    if (Array.isArray(last)) {
-      const x = toNum(last[xi]);
-      const y = toNum(last[yi]);
-      const z = toNum(last[zi]);
-      const measured = reliableDistanceKm(x, y, z);
-      if (measured !== null) {
-        distanceKm = measured;
-        distanceIsMeasured = true;
-        scPositionGseKm = { x: x as number, y: y as number, z: z as number };
+      if (byGsmNt !== null && !byByMinute.has(group.minuteMs)) {
+        byByMinute.set(group.minuteMs, byGsmNt);
       }
+
+      if (bzGsmNt === null && btNt === null) {
+        continue;
+      }
+
+      candidates.push({
+        timeMs: group.minuteMs,
+        observedMs: selected.timestampMs,
+        sourceId: 'swpc_rtsw',
+        sourceLabel: `SWPC · ${selected.source}`,
+        priority: SELECTED_RECORD_PRIORITY,
+        bzGsmNt,
+        btNt,
+      });
     }
   }
 
-  return { candidates, distanceKm, distanceIsMeasured, scPositionGseKm };
-}
+  for (const group of windGroups) {
+    for (const selected of group.records) {
+      noteRecord(selected);
+      const speedKmS = toNum(selected.record.proton_speed);
+      const densityCm3 = toNum(selected.record.proton_density);
 
-type NewFeed = ReturnType<typeof buildFromNewFeed>;
-type LegacyFeed = ReturnType<typeof buildFromLegacy>;
+      if (speedKmS === null && densityCm3 === null) {
+        continue;
+      }
 
-async function fetchNewFeed(): Promise<NewFeed> {
-  const [mag, wind, ephem] = await Promise.all([
-    fetchJson(MAG_NEW),
-    fetchJson(WIND_NEW),
-    fetchJson(EPHEM_NEW).catch(() => [] as unknown[]),
-  ]);
-  return buildFromNewFeed(mag, wind, ephem);
-}
-
-async function fetchLegacyFeed(): Promise<LegacyFeed> {
-  const [mag, plasma, ephem] = await Promise.all([
-    fetchJson(MAG_LEGACY),
-    fetchJson(PLASMA_LEGACY),
-    fetchJson(EPHEM_LEGACY).catch(() => [] as unknown[]),
-  ]);
-  return buildFromLegacy(mag, plasma, ephem);
-}
-
-const candidateMs = (candidate: PhysicalDriverCandidate): number => candidate.observedMs ?? candidate.timeMs;
-
-/**
- * The SWPC source for this poll. The new multi-spacecraft feed drives the recent
- * window (last 24 h, active-aware); the legacy 7-day products extend the history
- * backward beyond the new feed for chart depth, and stand in entirely when the new
- * feed is down — until that endpoint retires (~2026-06-30). Always resolves (an
- * empty result with an error message) rather than throwing, so the selection layer
- * can still consider the other pipeline.
- */
-export async function fetchSwpc(): Promise<L1SourceResult> {
-  const [newFeed, legacy] = await Promise.all([
-    fetchNewFeed().catch(() => null),
-    fetchLegacyFeed().catch(() => null),
-  ]);
-
-  const newCandidates = newFeed?.candidates ?? [];
-  const hasNewFeed = newCandidates.length > 0;
-  // Only the legacy tail older than the new feed extends the history — the recent
-  // window stays multi-spacecraft and active-aware, with no legacy overlap.
-  const newEarliestMs = hasNewFeed ? Math.min(...newCandidates.map(candidateMs)) : Number.POSITIVE_INFINITY;
-  const legacyTail = (legacy?.candidates ?? []).filter(candidate => candidateMs(candidate) < newEarliestMs);
-  const samples = resolveSamples([...newCandidates, ...legacyTail]);
-  // Position and label come from the new feed when it produced data, else legacy.
-  const scPositionGseKm = newFeed?.scPositionGseKm ?? legacy?.scPositionGseKm ?? null;
-
-  if (!samples.length) {
-    return {
-      sourceId: hasNewFeed ? 'swpc_rtsw' : 'swpc_legacy',
-      sourceLabel: 'SWPC RTSW',
-      samples: [],
-      distanceKm: NOMINAL_L1_DISTANCE_KM,
-      distanceIsMeasured: false,
-      scPositionGseKm,
-      latestSampleMs: null,
-      errorMessage: 'SWPC returned no usable samples (new feed and legacy both unavailable).',
-    };
+      candidates.push({
+        timeMs: group.minuteMs,
+        observedMs: selected.timestampMs,
+        sourceId: 'swpc_rtsw',
+        sourceLabel: `SWPC · ${selected.source}`,
+        priority: SELECTED_RECORD_PRIORITY,
+        speedKmS,
+        densityCm3,
+      });
+    }
   }
 
-  // By GSM is carried only by the new feed; attach it to the resolved samples by minute.
-  if (newFeed) {
-    for (const sample of samples) sample.byNt = newFeed.byByMinute.get(sample.ms) ?? null;
-  }
+  let distanceKm = NOMINAL_L1_DISTANCE_KM;
+  let distanceIsMeasured = false;
+  let scPositionGseKm: ScPositionGseKm | null = null;
 
-  const distanceIsMeasured = (hasNewFeed && newFeed!.distanceIsMeasured) || (!hasNewFeed && (legacy?.distanceIsMeasured ?? false));
-  const distanceKm = hasNewFeed && newFeed!.distanceIsMeasured
-    ? newFeed!.distanceKm
-    : legacy?.distanceIsMeasured ? legacy.distanceKm : NOMINAL_L1_DISTANCE_KM;
+  // Search newest minute first; within it, active first and then official fallback.
+  for (let groupIndex = ephemerisGroups.length - 1; groupIndex >= 0 && !distanceIsMeasured; groupIndex -= 1) {
+    for (const selected of ephemerisGroups[groupIndex].records) {
+      const x = toNum(selected.record.x_gse);
+      const y = toNum(selected.record.y_gse);
+      const z = toNum(selected.record.z_gse);
+      const measured = reliableDistanceKm(x, y, z);
+      if (measured === null) {
+        continue;
+      }
+
+      distanceKm = measured;
+      distanceIsMeasured = true;
+      scPositionGseKm = { x: x as number, y: y as number, z: z as number };
+      break;
+    }
+  }
 
   return {
-    sourceId: hasNewFeed ? 'swpc_rtsw' : 'swpc_legacy',
-    sourceLabel: hasNewFeed ? newFeed!.label : 'SWPC · legacy RTSW',
-    samples,
+    candidates,
     distanceKm,
     distanceIsMeasured,
     scPositionGseKm,
-    latestSampleMs: samples[samples.length - 1].ms,
-    errorMessage: null,
+    byByMinute,
+    label: swpcLabel(activeAt, latestAnySource),
+    magMinutes: magGroups.length,
+    windMinutes: windGroups.length,
+    ephemerisMinutes: ephemerisGroups.length,
+  };
+}
+
+function resultValue(result: PromiseSettledResult<unknown>) {
+  return result.status === 'fulfilled' ? result.value : [];
+}
+
+function rejectionMessage(product: string, result: PromiseSettledResult<unknown>) {
+  if (result.status === 'fulfilled') {
+    return null;
+  }
+
+  const detail = result.reason instanceof Error ? result.reason.message : 'request failed';
+  return `${product} unavailable (${detail})`;
+}
+
+function latestObservationMs(samples: L1SourceResult['samples']): number | null {
+  if (samples.length === 0) {
+    return null;
+  }
+
+  const last = samples[samples.length - 1];
+  const observationTimes = Object.values(last.sourceTimeByVariable)
+    .map(value => value ? new Date(value).getTime() : Number.NaN)
+    .filter(Number.isFinite);
+
+  return observationTimes.length > 0 ? Math.max(...observationTimes) : last.ms;
+}
+
+/**
+ * Fetch the canonical products without an all-or-nothing dependency between
+ * them. An error message may accompany usable samples to expose a partial feed.
+ */
+export async function fetchSwpc(): Promise<L1SourceResult> {
+  const [magResult, windResult, ephemerisResult] = await Promise.allSettled([
+    fetchJson(MAG_URL),
+    fetchJson(WIND_URL),
+    fetchJson(EPHEMERIS_URL),
+  ]);
+  const feed = buildFromRtswFeed(
+    resultValue(magResult),
+    resultValue(windResult),
+    resultValue(ephemerisResult),
+  );
+  const partialProblems = [
+    rejectionMessage('magnetic field', magResult),
+    rejectionMessage('solar wind', windResult),
+    rejectionMessage('ephemeris', ephemerisResult),
+    magResult.status === 'fulfilled' && feed.magMinutes === 0
+      ? 'magnetic field returned no usable object records'
+      : null,
+    windResult.status === 'fulfilled' && feed.windMinutes === 0
+      ? 'solar wind returned no usable object records'
+      : null,
+    ephemerisResult.status === 'fulfilled' && feed.ephemerisMinutes === 0
+      ? 'ephemeris returned no usable object records'
+      : null,
+  ].filter((message): message is string => message !== null);
+  const samples = resolveSamples(feed.candidates);
+
+  for (const sample of samples) {
+    sample.byNt = feed.byByMinute.get(sample.ms) ?? null;
+  }
+
+  if (samples.length === 0) {
+    const detail = partialProblems.length > 0 ? ` ${partialProblems.join('; ')}.` : '';
+    return {
+      sourceId: 'swpc_rtsw',
+      sourceLabel: feed.label,
+      samples: [],
+      distanceKm: feed.distanceKm,
+      distanceIsMeasured: feed.distanceIsMeasured,
+      scPositionGseKm: feed.scPositionGseKm,
+      latestSampleMs: null,
+      errorMessage: `SWPC RTSW returned no usable magnetic-field or solar-wind samples.${detail}`,
+    };
+  }
+
+  return {
+    sourceId: 'swpc_rtsw',
+    sourceLabel: feed.label,
+    samples,
+    distanceKm: feed.distanceKm,
+    distanceIsMeasured: feed.distanceIsMeasured,
+    scPositionGseKm: feed.scPositionGseKm,
+    latestSampleMs: latestObservationMs(samples),
+    errorMessage: partialProblems.length > 0
+      ? `SWPC RTSW partial feed: ${partialProblems.join('; ')}.`
+      : null,
   };
 }

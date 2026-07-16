@@ -358,11 +358,11 @@ function buildDscovrTelemetry({
 
   return {
     id: 'DSCOVR',
-    displayName: 'DISCVR / DSCOVR',
-    source: 'RTSW primary stream',
-    endpoint: 'SWPC real-time solar-wind stream',
-    platform: 'Spacecraft L1 operativo de viento solar',
-    description: 'Stream L1 usado para los plots actuales de campo magnetico, plasma y efemerides.',
+    displayName: 'SWPC active RTSW',
+    source: 'RTSW multi-spacecraft stream',
+    endpoint: 'SWPC current RTSW JSON products',
+    platform: 'Fuente L1 activa designada por SWPC',
+    description: 'Stream L1 activo usado para los plots de campo magnético, plasma y efemérides; el ID interno DSCOVR se conserva por compatibilidad.',
     variables: ['time_tag', 'bt', 'bx_gsm', 'by_gsm', 'bz_gsm', 'density', 'speed', 'temperature', 'x_gse', 'y_gse', 'z_gse'],
     status: status.status,
     lastSampleTime: status.lastSampleTime,

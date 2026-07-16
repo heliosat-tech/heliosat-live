@@ -1,6 +1,7 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import type { SatelliteTLE, CelesTrakResponse } from '@/services/celestrakService';
+import { readTleResponse } from './tleResponse';
 
 export type TleGroup = 'stations' | 'weather' | 'starlink' | 'active';
 
@@ -78,7 +79,10 @@ export const SatelliteConfigProvider: React.FC<ProviderProps> = ({ children, ini
     if (group === 'stations' && tleData === initialTleData && initialTleData.tles.length > 0) return;
     let cancelled = false;
     fetch(`/api/tle?group=${group}`, { signal: AbortSignal.timeout(15_000) })
-      .then(r => { if (!r.ok) throw new Error(); return r.json() as Promise<CelesTrakResponse>; })
+      // `/api/tle` returns the same structured contract for a cold-cache 503. Parse that
+      // payload too so the UI retains the real upstream error instead of replacing it with
+      // a generic network failure. Only malformed/non-JSON responses enter the catch path.
+      .then(readTleResponse)
       .then(data => {
         if (!cancelled) setTleData(data);
       })
