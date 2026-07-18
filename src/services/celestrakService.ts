@@ -24,6 +24,9 @@ export interface CelesTrakSourceError {
 
 export type CelesTrakCacheSource = 'memory' | 'next-data-cache' | 'direct-upstream' | 'local-last-good' | 'none';
 
+/** Which upstream actually produced the catalog: CelesTrak itself or the daily GitHub mirror. */
+export type CelesTrakUpstream = 'celestrak' | 'celestrak-mirror';
+
 export interface CelesTrakCacheMetadata {
   source: CelesTrakCacheSource;
   fetchedAtUtc: string | null;
@@ -42,6 +45,7 @@ export interface CelesTrakResponse {
   error?: CelesTrakSourceError | null;
   nextRetryAtUtc?: string | null;
   cache?: CelesTrakCacheMetadata;
+  upstreamSource?: CelesTrakUpstream;
 }
 
 export const CELESTRAK_TLE_GROUPS = ['stations', 'weather', 'starlink', 'active'] as const;
@@ -50,6 +54,14 @@ export type CelesTrakTleGroup = (typeof CELESTRAK_TLE_GROUPS)[number];
 /** CelesTrak says GP data need not be requested more often than once every two hours. */
 export const CELESTRAK_REFRESH_INTERVAL_SECONDS = 7_200;
 export const CELESTRAK_FAILURE_COOLDOWN_SECONDS = 7_200;
+
+/**
+ * Daily raw mirror of the CelesTrak group files, used only when CelesTrak itself is unreachable
+ * (its firewall blocks IPs it considers noisy, which surfaces as a TCP connect timeout).
+ */
+const DEFAULT_MIRROR_BASE = 'https://raw.githubusercontent.com/satvisorcom/satvisor-data/master/celestrak/tle';
+/** Mirror catalogs whose newest TLE epoch is older than this are rejected as stale. */
+const MIRROR_MAX_EPOCH_AGE_DAYS = 10;
 
 const FETCH_TIMEOUT_MS = 6_000;
 const MAX_ATTEMPTS = 2;
@@ -64,16 +76,18 @@ interface CachedCatalog {
   fetchedAtUtc: string;
   fetchedAtMs: number;
   tles: SatelliteTLE[];
+  upstream: CelesTrakUpstream;
 }
 
 interface LocalCatalogFile {
   group: CelesTrakTleGroup;
   fetched_at_utc: string;
   tles: SatelliteTLE[];
+  upstream?: CelesTrakUpstream;
 }
 
 type UpstreamCatalogResult =
-  | { ok: true; group: CelesTrakTleGroup; fetchedAtUtc: string; tles: SatelliteTLE[] }
+  | { ok: true; group: CelesTrakTleGroup; fetchedAtUtc: string; tles: SatelliteTLE[]; upstream: CelesTrakUpstream }
   | { ok: false; group: CelesTrakTleGroup; error: CelesTrakSourceError };
 
 interface CircuitState {
@@ -149,7 +163,13 @@ function asLocalCatalog(value: unknown, expectedGroup: CelesTrakTleGroup): Cache
   if (candidate.group !== expectedGroup || typeof candidate.fetched_at_utc !== 'string' || !Array.isArray(candidate.tles)) return null;
   const fetchedAtMs = parseTimestampMs(candidate.fetched_at_utc);
   if (fetchedAtMs === null || candidate.tles.length === 0 || !candidate.tles.every(isSatelliteTle)) return null;
-  return { group: expectedGroup, fetchedAtUtc: candidate.fetched_at_utc, fetchedAtMs, tles: candidate.tles };
+  return {
+    group: expectedGroup,
+    fetchedAtUtc: candidate.fetched_at_utc,
+    fetchedAtMs,
+    tles: candidate.tles,
+    upstream: candidate.upstream === 'celestrak-mirror' ? 'celestrak-mirror' : 'celestrak',
+  };
 }
 
 async function loadLocalLastGood(group: CelesTrakTleGroup): Promise<CachedCatalog | null> {
@@ -173,6 +193,7 @@ async function persistLocalLastGood(catalog: CachedCatalog): Promise<void> {
     group: catalog.group,
     fetched_at_utc: catalog.fetchedAtUtc,
     tles: catalog.tles,
+    upstream: catalog.upstream,
   };
 
   try {
@@ -277,7 +298,7 @@ async function fetchOnce(group: CelesTrakTleGroup): Promise<UpstreamCatalogResul
       };
     }
 
-    return { ok: true, group, fetchedAtUtc: new Date().toISOString(), tles };
+    return { ok: true, group, fetchedAtUtc: new Date().toISOString(), tles, upstream: 'celestrak' };
   } catch (error) {
     if (isTimeoutError(error)) {
       return {
@@ -313,6 +334,53 @@ async function fetchOnce(group: CelesTrakTleGroup): Promise<UpstreamCatalogResul
   }
 }
 
+function tleEpochMs(line1: string): number | null {
+  const yearDigits = Number(line1.slice(18, 20));
+  const dayOfYear = Number(line1.slice(20, 32));
+  if (!Number.isFinite(yearDigits) || !Number.isFinite(dayOfYear) || dayOfYear <= 0) return null;
+  const year = yearDigits < 57 ? 2_000 + yearDigits : 1_900 + yearDigits;
+  return Date.UTC(year, 0, 1) + (dayOfYear - 1) * 86_400_000;
+}
+
+function newestTleEpochMs(tles: SatelliteTLE[]): number | null {
+  let newest: number | null = null;
+  for (const tle of tles) {
+    const epochMs = tleEpochMs(tle.line1);
+    if (epochMs !== null && (newest === null || epochMs > newest)) newest = epochMs;
+  }
+  return newest;
+}
+
+function mirrorEndpoint(group: CelesTrakTleGroup): string {
+  const base = process.env.HELIOSAT_TLE_MIRROR_BASE?.trim() || DEFAULT_MIRROR_BASE;
+  return `${base.replace(/\/+$/, '')}/${group}.tle`;
+}
+
+/**
+ * Backup catalog from the daily GitHub mirror. Returns null on any failure so the caller keeps
+ * reporting the primary CelesTrak error; a mirror whose newest epoch is too old is also rejected
+ * rather than silently propagating stale orbits.
+ */
+async function fetchMirrorOnce(group: CelesTrakTleGroup): Promise<UpstreamCatalogResult | null> {
+  try {
+    const response = await fetch(mirrorEndpoint(group), {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: { Accept: 'text/plain' },
+    });
+    if (!response.ok) return null;
+
+    const tles = parseCelesTrakTleText(await response.text(), group);
+    const newestEpochMs = newestTleEpochMs(tles);
+    if (tles.length === 0 || newestEpochMs === null) return null;
+    if (Date.now() - newestEpochMs > MIRROR_MAX_EPOCH_AGE_DAYS * 86_400_000) return null;
+
+    return { ok: true, group, fetchedAtUtc: new Date().toISOString(), tles, upstream: 'celestrak-mirror' };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchCatalogWithRetry(group: CelesTrakTleGroup): Promise<UpstreamCatalogResult> {
   let failure: UpstreamCatalogResult & { ok: false } | null = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
@@ -322,6 +390,10 @@ async function fetchCatalogWithRetry(group: CelesTrakTleGroup): Promise<Upstream
     failure = { ...result, error: { ...result.error, attempts: attempt } };
     if (!result.error.retryable) break;
   }
+
+  const mirror = await fetchMirrorOnce(group);
+  if (mirror) return mirror;
+
   return failure ?? {
     ok: false,
     group,
@@ -413,6 +485,7 @@ function connectedResponse(
     error,
     nextRetryAtUtc: retryAtMs === null ? null : new Date(retryAtMs).toISOString(),
     cache: cacheMetadata(catalog, source),
+    upstreamSource: catalog.upstream,
   };
 }
 
@@ -459,7 +532,7 @@ async function resolveTleGroup(group: CelesTrakTleGroup): Promise<CelesTrakRespo
   const result = persistent.result;
   if (result.ok) {
     const fetchedAtMs = parseTimestampMs(result.fetchedAtUtc) ?? Date.now();
-    cached = { group, fetchedAtUtc: result.fetchedAtUtc, fetchedAtMs, tles: result.tles };
+    cached = { group, fetchedAtUtc: result.fetchedAtUtc, fetchedAtMs, tles: result.tles, upstream: result.upstream };
     lastGood.set(group, cached);
     circuits.delete(group);
     await persistLocalLastGood(cached);
