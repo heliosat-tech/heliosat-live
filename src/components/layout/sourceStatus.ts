@@ -44,7 +44,7 @@ export function summarizeSourceStatuses(sources: SourceStatus[]): SourceStatusSu
 }
 
 export function buildCelestrakSourceStatus(
-  data: Pick<CelesTrakResponse, 'isConnected' | 'lastUpdated' | 'errorMessage' | 'tles' | 'stale' | 'error' | 'nextRetryAtUtc'>,
+  data: Pick<CelesTrakResponse, 'isConnected' | 'lastUpdated' | 'errorMessage' | 'tles' | 'stale' | 'error' | 'nextRetryAtUtc' | 'upstreamSource'>,
   checking: boolean,
 ): SourceStatus {
   const hasCatalog = data.tles.length > 0;
@@ -80,7 +80,9 @@ export function buildCelestrakSourceStatus(
       name: 'CelesTrak (TLE)',
       status: 'connected',
       lastUpdated: data.lastUpdated,
-      detail: null,
+      detail: data.upstreamSource === 'celestrak-mirror'
+        ? 'Serving the daily CelesTrak mirror; direct CelesTrak is unreachable.'
+        : null,
     };
   }
 

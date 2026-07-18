@@ -26,6 +26,22 @@ const TLE: SatelliteTLE = {
   source: 'celestrak-stations',
 };
 
+const MIRROR_URL_PREFIX = 'https://raw.githubusercontent.com/satvisorcom/satvisor-data/master/celestrak/tle/';
+
+/** Builds a mirror-style catalog whose TLE epoch is `ageDays` old, so freshness checks see real dates. */
+function mirrorTleText(ageDays: number): string {
+  const epoch = new Date(Date.now() - ageDays * 86_400_000);
+  const startOfYear = Date.UTC(epoch.getUTCFullYear(), 0, 1);
+  const dayOfYear = (epoch.getTime() - startOfYear) / 86_400_000 + 1;
+  const epochField = `${String(epoch.getUTCFullYear() % 100).padStart(2, '0')}${dayOfYear.toFixed(8).padStart(12, '0')}`;
+  return [
+    'ISS (ZARYA)',
+    `1 25544U 98067A   ${epochField}  .00004078  00000+0  82095-4 0  9992`,
+    '2 25544  51.6311 158.6576 0006718 300.0875  59.9447 15.49019038576187',
+    '',
+  ].join('\n');
+}
+
 const originalFetch = globalThis.fetch;
 const originalCacheDirectory = process.env.HELIOSAT_CELESTRAK_CACHE_DIR;
 let cacheDirectory = '';
@@ -83,7 +99,9 @@ test('coalesces concurrent calls, uses the official uppercase query, and persist
 test('does not retry terminal redirects, client errors, or rate limits and opens a two-hour circuit', async () => {
   let status = 301;
   let calls = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(MIRROR_URL_PREFIX)) return new Response('mirror unavailable', { status: 404 });
     calls += 1;
     return new Response(status === 429 ? 'rate limited' : 'terminal response', {
       status,
@@ -115,7 +133,9 @@ test('does not retry terminal redirects, client errors, or rate limits and opens
 test('retries only a timeout or 5xx once before entering cooldown', async t => {
   await t.test('timeout', async () => {
     let calls = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith(MIRROR_URL_PREFIX)) return new Response('mirror unavailable', { status: 404 });
       calls += 1;
       const error = new Error('operation timed out');
       error.name = 'TimeoutError';
@@ -130,7 +150,9 @@ test('retries only a timeout or 5xx once before entering cooldown', async t => {
   resetCelesTrakServiceForTests();
   await t.test('HTTP 503', async () => {
     let calls = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith(MIRROR_URL_PREFIX)) return new Response('mirror unavailable', { status: 404 });
       calls += 1;
       return new Response('temporarily unavailable', { status: 503, statusText: 'Service Unavailable' });
     }) as typeof fetch;
@@ -150,7 +172,9 @@ test('serves an expired real local catalog as stale when refresh fails', async (
     tles: [TLE],
   }), 'utf8');
   let calls = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(MIRROR_URL_PREFIX)) return new Response('mirror unavailable', { status: 404 });
     calls += 1;
     return new Response('blocked until next update', { status: 429, headers: { 'Retry-After': '7200' } });
   }) as typeof fetch;
@@ -167,7 +191,9 @@ test('serves an expired real local catalog as stale when refresh fails', async (
 
 test('treats an HTTP 200 non-TLE body as a terminal structured failure', async () => {
   let calls = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(MIRROR_URL_PREFIX)) return new Response('mirror unavailable', { status: 404 });
     calls += 1;
     return new Response('<html>maintenance</html>', { status: 200 });
   }) as typeof fetch;
@@ -176,4 +202,43 @@ test('treats an HTTP 200 non-TLE body as a terminal structured failure', async (
   assert.equal(result.error?.kind, 'invalid-payload');
   assert.equal(result.error?.attempts, 1);
   assert.equal(result.tles.length, 0);
+});
+
+test('serves the daily mirror when CelesTrak itself is unreachable', async () => {
+  let mirrorUrl = '';
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(MIRROR_URL_PREFIX)) {
+      mirrorUrl = url;
+      return new Response(mirrorTleText(1), { status: 200 });
+    }
+    return new Response('blocked', { status: 403 });
+  }) as typeof fetch;
+
+  const result = await fetchTleGroup('stations');
+  assert.equal(mirrorUrl, `${MIRROR_URL_PREFIX}stations.tle`);
+  assert.equal(result.isConnected, true);
+  assert.equal(result.stale, false);
+  assert.equal(result.upstreamSource, 'celestrak-mirror');
+  assert.equal(result.tles.length, 1);
+  assert.equal(result.tles[0]?.source, 'celestrak-stations');
+  assert.equal(result.errorMessage, null);
+
+  const saved = JSON.parse(await readFile(path.join(cacheDirectory, 'stations.json'), 'utf8')) as {
+    upstream?: string;
+  };
+  assert.equal(saved.upstream, 'celestrak-mirror');
+});
+
+test('rejects a mirror catalog whose newest epoch is too old', async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(MIRROR_URL_PREFIX)) return new Response(mirrorTleText(30), { status: 200 });
+    return new Response('blocked', { status: 403 });
+  }) as typeof fetch;
+
+  const result = await fetchTleGroup('stations');
+  assert.equal(result.isConnected, false);
+  assert.equal(result.tles.length, 0);
+  assert.equal(result.error?.httpStatus, 403);
 });
