@@ -676,7 +676,11 @@ function normalizeArrivalModeResult(mode: LeoArrivalMode, value: unknown): LeoAr
   const models = Array.isArray(record.models)
     ? record.models.map(normalizeModel).filter((model): model is LeoValidationModel => model !== null)
     : [];
-  const metrics = normalizeMetrics(record.metrics);
+  const directMetrics = normalizeMetrics(record.metrics);
+  const metrics = [
+    ...directMetrics,
+    ...normalizeDensityMetrics(record.metrics).filter(candidate => !directMetrics.some(metric => metric.key === candidate.key)),
+  ];
   return {
     mode,
     label: boundedString(record.label) ?? unavailableArrivalMode(mode, '').label,
