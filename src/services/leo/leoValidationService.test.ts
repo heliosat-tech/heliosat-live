@@ -238,6 +238,25 @@ test('declared identical comparison is downgraded when a required fingerprint is
   assert.match(study?.arrival_comparability.reasons.join(' ') ?? '', /required fingerprints/);
 });
 
+test('arrival-mode metrics expose nested RMSE skill versus the physical baseline', () => {
+  const study = normalizeLeoValidationStudy({
+    run_id: 'nested-skill',
+    generated_at_utc: '2026-07-13T12:00:00Z',
+    modes: { reference_aligned: {}, heliosat_predicted_arrival: {} },
+    arrival_modes: {
+      mru_ml: {
+        status: 'available',
+        metrics: {
+          rmse_log10_rho: 0.1,
+          sample_count: 100,
+          skill_vs_m0: { rmse_skill: 0.05 },
+        },
+      },
+    },
+  });
+  assert.equal(study?.arrival_modes.mru_ml.metrics.find(metric => metric.key === 'rmse_skill_vs_m0')?.value, 0.05);
+});
+
 test('legacy MRU fallback is exposed as MRU while MRU plus ML stays unavailable', () => {
   const study = normalizeLeoValidationStudy({
     run_id: 'pilot-mru-fallback',

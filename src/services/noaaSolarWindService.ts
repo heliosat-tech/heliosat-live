@@ -31,12 +31,20 @@ export interface NoaaEphemerisData {
   vz_gsm: string | null;
 }
 
+export interface NoaaRtswSpacecraftStatus {
+  name: string;
+  active: boolean;
+  lastUpdated: string;
+}
+
 export interface NoaaServiceResponse<T> {
   isConnected: boolean;
   lastUpdated: string | null;
   errorMessage: string | null;
   latestData: T | null;
   timeSeries: T[];
+  /** Spacecraft currently present in this live RTSW product. */
+  spacecraft: NoaaRtswSpacecraftStatus[];
 }
 
 const NOAA_RTSW_BASE_URL = 'https://services.swpc.noaa.gov/json/rtsw';
@@ -183,7 +191,30 @@ function emptyResponse<T>(errorMessage: string): NoaaServiceResponse<T> {
     errorMessage,
     latestData: null,
     timeSeries: [],
+    spacecraft: [],
   };
+}
+
+function spacecraftFromGroups(groups: RtswMinuteGroup[]): NoaaRtswSpacecraftStatus[] {
+  const latestByName = new Map<string, SelectedRtswRecord>();
+
+  for (const group of groups) {
+    for (const record of group.records) {
+      if (!record.source) continue;
+      const previous = latestByName.get(record.source);
+      if (!previous || record.timestampMs > previous.timestampMs) {
+        latestByName.set(record.source, record);
+      }
+    }
+  }
+
+  return [...latestByName.values()]
+    .map(record => ({
+      name: record.source,
+      active: record.active,
+      lastUpdated: record.timeUtc,
+    }))
+    .sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
 
 async function fetchRtswProduct<T>(
@@ -218,6 +249,7 @@ async function fetchRtswProduct<T>(
       errorMessage: null,
       latestData,
       timeSeries,
+      spacecraft: spacecraftFromGroups(groups),
     };
   } catch {
     return emptyResponse(unavailableMessage);

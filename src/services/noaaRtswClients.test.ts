@@ -234,6 +234,18 @@ test('public NOAA service uses live canonical object feeds with active-first fie
   assert.equal(mag.lastUpdated, mag.latestData?.time_tag);
   assert.equal(wind.lastUpdated, wind.latestData?.time_tag);
   assert.equal(ephemeris.lastUpdated, ephemeris.latestData?.time_tag);
+  assert.deepEqual(mag.spacecraft.map(spacecraft => ({ name: spacecraft.name, active: spacecraft.active })), [
+    { name: 'SOLAR1', active: true },
+    { name: 'ACE', active: false },
+  ]);
+  assert.deepEqual(wind.spacecraft.map(spacecraft => ({ name: spacecraft.name, active: spacecraft.active })), [
+    { name: 'SOLAR1', active: true },
+    { name: 'ACE', active: false },
+  ]);
+  assert.deepEqual(ephemeris.spacecraft.map(spacecraft => ({ name: spacecraft.name, active: spacecraft.active })), [
+    { name: 'SOLAR1', active: true },
+    { name: 'ACE', active: false },
+  ]);
   assertOnlyCanonicalUrls(calls);
 });
 
@@ -251,6 +263,7 @@ test('public NOAA service does not report a stale-only feed as connected', { con
   assert.equal(result.lastUpdated, null);
   assert.equal(result.latestData, null);
   assert.deepEqual(result.timeSeries, []);
+  assert.deepEqual(result.spacecraft, []);
 });
 
 test('ingestion RTSW client resolves object arrays per minute and preserves observation time', { concurrency: false }, async () => {

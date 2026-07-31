@@ -136,6 +136,53 @@ interface HeatmapReplaySeries {
 
 const HEATMAP_REPLAY_CACHE = new Map<HeatmapWindowKey, HeatmapReplaySeries>();
 
+// The home page server-renders the initial payload once; without a client refresh the heatmaps
+// freeze at that snapshot. A single module-level poller (shared by every panel instance) refetches
+// the forecast each minute so the arrival window slides and parcels visibly advance toward Earth.
+const LIVE_FORECAST_REFRESH_MS = 60_000;
+let liveForecastTimer: ReturnType<typeof setInterval> | null = null;
+let liveForecastLatest: L1ForecastPanelData | null = null;
+const liveForecastSubscribers = new Set<(data: L1ForecastPanelData) => void>();
+
+async function refreshLiveForecast() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  try {
+    const response = await fetch('/api/l1-forecast', {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return;
+    const data = await response.json() as L1ForecastPanelData;
+    liveForecastLatest = data;
+    liveForecastSubscribers.forEach(listener => listener(data));
+  } catch {
+    // Keep showing the last good snapshot; the next tick retries.
+  }
+}
+
+function subscribeLiveForecast(listener: (data: L1ForecastPanelData) => void) {
+  liveForecastSubscribers.add(listener);
+  if (!liveForecastTimer) {
+    liveForecastTimer = setInterval(() => { void refreshLiveForecast(); }, LIVE_FORECAST_REFRESH_MS);
+  }
+  return () => {
+    liveForecastSubscribers.delete(listener);
+    if (liveForecastSubscribers.size === 0 && liveForecastTimer) {
+      clearInterval(liveForecastTimer);
+      liveForecastTimer = null;
+    }
+  };
+}
+
+function useLiveL1ForecastData(initial: L1ForecastPanelData): L1ForecastPanelData {
+  const [data, setData] = useState(
+    liveForecastLatest && liveForecastLatest.generatedAtMs > initial.generatedAtMs ? liveForecastLatest : initial,
+  );
+  useEffect(() => subscribeLiveForecast(setData), []);
+  return data;
+}
+
 function isReplaySeriesValidForWindow(windowKey: Exclude<HeatmapWindowKey, 'live'>, series: HeatmapReplaySeries) {
   if (series.window !== windowKey) return false;
   const spanMs = series.endMs - series.startMs;
@@ -850,8 +897,8 @@ function HeatmapRow({
       <div className={`relative flex min-w-0 overflow-hidden rounded-md border border-slate-600/80 bg-slate-900/80 shadow-inner ${height}`}>
         {row.cells.length ? row.cells.map((cell, index) => (
           <div
-            key={`${row.id}-${cell.t}-${index}`}
-            className="min-w-[2px] flex-1 border-r border-slate-950/35 last:border-r-0"
+            key={`${row.id}-${index}`}
+            className="min-w-[2px] flex-1 border-r border-slate-950/35 transition-colors duration-700 last:border-r-0"
             style={{ backgroundColor: cell.color }}
             title={`${formatClockMs(cell.t)} UTC - ${cell.label}`}
           />
@@ -953,11 +1000,18 @@ function ArrivalHeatmaps({ data, expanded }: { data: L1ForecastPanelData; expand
     () => activeReplay ? buildReplayHeatmapRows(activeReplay.gForecast, expanded ? MAX_EXPANDED_HEATMAP_CELLS : MAX_COMPACT_HEATMAP_CELLS) : [],
     [activeReplay, expanded],
   );
-  const rows = isReplay ? replayRows : data.heatmap.rows;
+  const liveRows = useMemo(() => {
+    // Live view runs L1 (newest detection) on the left to Earth (imminent arrival) on the right,
+    // so cells are drawn in descending arrival time: each refresh shifts every parcel rightward,
+    // toward the Earth marker. Replay windows keep chronological (ascending) order.
+    return data.heatmap.rows.map(row => ({ ...row, cells: [...row.cells].reverse() }));
+  }, [data.heatmap.rows]);
+  const rows = isReplay ? replayRows : liveRows;
   const startMs = isReplay ? activeReplay?.startMs ?? null : data.heatmap.startMs;
   const endMs = isReplay ? activeReplay?.endMs ?? null : data.heatmap.endMs;
   const markerMs = isReplay ? activeReplay?.endMs ?? null : data.generatedAtMs;
-  const markerFraction = timelineFraction(startMs, endMs, markerMs);
+  const timeFraction = timelineFraction(startMs, endMs, markerMs);
+  const markerFraction = timeFraction === null || isReplay ? timeFraction : 1 - timeFraction;
   const hasCells = rows.some(row => row.cells.length > 0);
   const replayPeak = useMemo(() => {
     if (!activeReplay || activeReplay.gForecast.length === 0) return null;
@@ -1048,12 +1102,12 @@ function ArrivalHeatmaps({ data, expanded }: { data: L1ForecastPanelData; expand
                 </>
               ) : (
                 <>
-                  <span>now</span>
+                  <span>now at L1</span>
                   <span>arriving at Earth</span>
                 </>
               )}
             </div>
-            <span className="text-right">last</span>
+            <span className="text-right">{isReplay ? 'last' : 'L1 now'}</span>
           </div>
           <div className="space-y-1.5">
             {rows.map(row => (
@@ -1092,10 +1146,11 @@ function DataQualityFooter({ data }: { data: L1ForecastPanelData }) {
 // Left column: the definitive L1 -> Earth propagation (now + expected at arrival) plus the live
 // forecast charts. This is the single surviving version of the old "Arrival Prediction" content.
 export const L1PropagationPanel: React.FC<L1ForecastPanelProps> = ({
-  data,
+  data: initialData,
   expanded = false,
   className = '',
 }) => {
+  const data = useLiveL1ForecastData(initialData);
   const variables: ForecastVariable[] = ['speed', 'bz', 'density', 'bt'];
 
   return (
@@ -1145,10 +1200,11 @@ export const L1PropagationPanel: React.FC<L1ForecastPanelProps> = ({
 
 // Center column: the forecast severity heatmaps over the L1->Earth arrival timeline.
 export const ArrivalHeatmapPanel: React.FC<L1ForecastPanelProps> = ({
-  data,
+  data: initialData,
   expanded = false,
   className = '',
 }) => {
+  const data = useLiveL1ForecastData(initialData);
   return (
     <GlassCard
       title="Forecast Heatmaps"

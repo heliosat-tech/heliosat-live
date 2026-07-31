@@ -3126,7 +3126,7 @@ function ConsoleSidebar({ view, domain, onView, scales, forecastG, visible, seri
               ? 'Experimental density and first-order drag context along a real TLE trajectory. Forecast and scenario outputs remain distinct.'
               : view === 'training'
                 ? 'Official Swarm and GRACE-FO density products, local processing coverage, quality status and lineage.'
-                : 'Held-out density studies with reference-aligned and HelioSat-predicted-arrival results reported separately.'}
+                : 'A guided study of how observed Swarm and GRACE-FO density becomes a tested model result, and where the separate drag scenario begins.'}
           </p>
           <div className="mt-2 flex flex-wrap gap-1 font-mono text-[8px] uppercase tracking-widest text-slate-500">
             <span className="rounded border border-sky-400/20 px-1.5 py-0.5">observed</span>
