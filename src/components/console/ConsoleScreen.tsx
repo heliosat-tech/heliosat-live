@@ -2,9 +2,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, GitCompareArrows, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, RefreshCw, Scale, Timer, Wind } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, ChevronDown, ChevronRight, Clock3, Database, Download, Eye, EyeOff, Gauge, GitCompareArrows, History, Info, Layers, LineChart as LineChartIcon, Loader2, MoreVertical, RefreshCw, Scale, Timer, Wind } from 'lucide-react';
 import { TrainingDataPanel } from './TrainingDataPanel';
 import { ConsoleSectionTabs } from './ConsoleSectionTabs';
+import { GeomagneticStormStudyPanel } from './GeomagneticStormStudyPanel';
 import { LeoArchivePanel } from './leo/LeoArchivePanel';
 import { LeoRealtimePanel } from './leo/LeoRealtimePanel';
 import { LeoValidationPanel } from './leo/LeoValidationPanel';
@@ -3119,7 +3120,16 @@ function ConsoleSidebar({ view, domain, onView, scales, forecastG, visible, seri
   return (
     <aside className="flex w-full flex-col gap-3 self-start lg:sticky lg:top-0 lg:w-72 lg:shrink-0">
       <SidebarNav view={view} onView={onView} />
-      {domain === 'leo' ? (
+      {domain === 'geomagnetic' ? (
+        <SidebarGroup icon={BarChart3} title="Geomagnetic-storm study">
+          <p className="text-[11px] leading-relaxed text-slate-400">Causal, held-out validation of HelioSat&apos;s short-lead Kp estimate against GFZ definitive planetary Kp, including false alarms, missed storms and severity error.</p>
+          <div className="mt-2 flex flex-wrap gap-1 font-mono text-[8px] uppercase tracking-widest text-slate-500">
+            <span className="rounded border border-cyan-400/20 px-1.5 py-0.5">47 min median lead</span>
+            <span className="rounded border border-emerald-400/20 px-1.5 py-0.5">held-out</span>
+            <span className="rounded border border-violet-400/20 px-1.5 py-0.5">GFZ definitive</span>
+          </div>
+        </SidebarGroup>
+      ) : domain === 'leo' ? (
         <SidebarGroup icon={view === 'realtime' ? Gauge : view === 'training' ? Layers : Timer} title={view === 'realtime' ? 'LEO density & drag' : view === 'training' ? 'Thermosphere archive' : 'LEO validation'}>
           <p className="text-[11px] leading-relaxed text-slate-400">
             {view === 'realtime'
@@ -3333,7 +3343,7 @@ export function ConsoleScreen() {
           </Link>
           <div>
             <h1 className="text-lg font-semibold text-slate-100">Internal Console</h1>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{activeDomain === 'leo' ? 'bow shock → thermosphere → LEO drag · research' : 'L1 → Earth · MRU + ML · live danger'}</p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{activeDomain === 'geomagnetic' ? 'L1 → planetary Kp · storm skill · retrospective' : activeDomain === 'leo' ? 'bow shock → thermosphere → LEO drag · research' : 'L1 → Earth · MRU + ML · live danger'}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -3369,7 +3379,9 @@ export function ConsoleScreen() {
           {/* Main body */}
           <div className="flex min-w-0 flex-1 flex-col gap-4">
             <ConsoleSectionTabs section={sectionId} value={activeDomain} onChange={selectDomain} />
-            {activeDomain === 'leo' ? (
+            {activeDomain === 'geomagnetic' ? (
+              <GeomagneticStormStudyPanel />
+            ) : activeDomain === 'leo' ? (
               view === 'realtime' ? <LeoRealtimePanel /> : view === 'training' ? <LeoArchivePanel /> : <LeoValidationPanel />
             ) : view === 'training' ? <TrainingDataPanel /> : view === 'validation' ? (
             /* Validation studies: benchmark-vs-ML headline, regime table, then context panels */

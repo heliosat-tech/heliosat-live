@@ -33,6 +33,7 @@ data/console/*
 !data/console/ml_data_split.json
 !data/console/arrival.json
 !data/console/timing.json
+!data/console/geomagnetic-storm-study.json
 
 # University report (sources, generated plots, compiled PDF) — local only
 docs/report/
