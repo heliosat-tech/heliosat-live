@@ -24,6 +24,7 @@ test('section-domain state copies are independent', () => {
 
 test('unknown persisted domains fail closed to L1', () => {
   assert.equal(normalizeConsoleSectionDomain('leo'), 'leo');
+  assert.equal(normalizeConsoleSectionDomain('geomagnetic'), 'geomagnetic');
   assert.equal(normalizeConsoleSectionDomain('LEO'), 'l1');
   assert.equal(normalizeConsoleSectionDomain(null), 'l1');
 });

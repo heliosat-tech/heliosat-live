@@ -1,5 +1,5 @@
 export type ConsoleSectionId = 'realtime' | 'archive' | 'validation';
-export type ConsoleSectionDomain = 'l1' | 'leo';
+export type ConsoleSectionDomain = 'l1' | 'leo' | 'geomagnetic';
 
 export type ConsoleSectionDomains = Record<ConsoleSectionId, ConsoleSectionDomain>;
 
@@ -14,6 +14,5 @@ export function createDefaultConsoleSectionDomains(): ConsoleSectionDomains {
 }
 
 export function normalizeConsoleSectionDomain(value: unknown): ConsoleSectionDomain {
-  return value === 'leo' ? 'leo' : 'l1';
+  return value === 'leo' || value === 'geomagnetic' ? value : 'l1';
 }
-

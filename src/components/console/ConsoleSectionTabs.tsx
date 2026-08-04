@@ -6,15 +6,24 @@ export const CONSOLE_SECTION_TAB_LABELS: Readonly<Record<ConsoleSectionId, Recor
   realtime: {
     l1: 'L1 to Bow Shock',
     leo: 'LEO Density and Drag',
+    geomagnetic: 'Geomagnetic Storms',
   },
   archive: {
     l1: 'L1 and Bow Shock',
     leo: 'Thermosphere and LEO',
+    geomagnetic: 'Geomagnetic Storms',
   },
   validation: {
     l1: 'L1 Arrival Time',
     leo: 'Thermospheric Density and Drag',
+    geomagnetic: 'Geomagnetic Storms',
   },
+});
+
+const CONSOLE_SECTION_DOMAINS: Readonly<Record<ConsoleSectionId, readonly ConsoleSectionDomain[]>> = Object.freeze({
+  realtime: ['l1', 'leo'],
+  archive: ['l1', 'leo'],
+  validation: ['l1', 'leo', 'geomagnetic'],
 });
 
 export function ConsoleSectionTabs({
@@ -32,7 +41,7 @@ export function ConsoleSectionTabs({
       role="tablist"
       aria-label={`${section} scientific domain`}
     >
-      {(['l1', 'leo'] as const).map(domain => (
+      {CONSOLE_SECTION_DOMAINS[section].map(domain => (
         <button
           key={domain}
           type="button"
