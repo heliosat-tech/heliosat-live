@@ -203,7 +203,12 @@ function ForecastInfo({ study }: { study: G3StudySummary | null }) {
         <Info className="h-4 w-4" aria-hidden="true" />
       </summary>
       <div className="absolute right-0 top-9 z-30 w-[min(21rem,calc(100vw-4rem))] rounded-lg border border-cyan-400/25 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
-        <div className="font-mono text-[9px] font-semibold uppercase tracking-widest text-cyan-100">How this forecast works</div>
+        <p className="rounded-md border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2.5 text-[10px] leading-relaxed text-slate-300">
+          Solar Cycle 25 is still in an active phase. The recent definitive Kp record suggests <strong className="font-semibold text-cyan-100">about 1 G3+ event per month</strong> as a practical reference for this year. Events are not evenly spaced: several may cluster together, followed by quiet weeks.
+        </p>
+        <p className="mt-1.5 font-mono text-[8px] uppercase tracking-wider text-slate-600">Basis · definitive Kp · Jan 2024–Apr 2026</p>
+
+        <div className="mt-3 font-mono text-[9px] font-semibold uppercase tracking-widest text-cyan-100">How this forecast works</div>
         <p className="mt-2 text-[10px] leading-relaxed text-slate-300">
           The live forecast propagates measured L1 solar-wind speed and Bz to Earth, smooths them over 30 minutes and requires a G3 signal to remain present for at least 10 minutes before issuing an alert.
         </p>
