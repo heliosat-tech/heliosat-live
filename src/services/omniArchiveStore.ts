@@ -25,6 +25,10 @@ const DEFAULT_YEARS = 6; // covers the 5y window with margin
 const COVERED_THRESHOLD = 4000; // hourly rows in a past year to consider it archived (~½ year)
 const SPDF_BASE = 'https://spdf.gsfc.nasa.gov/pub/data/omni/low_res_omni';
 const FETCH_TIMEOUT_MS = 60_000;
+const HOUR = 60 * 60 * 1000;
+const AUTO_REFRESH_NEAR_NOW_MS = 2 * HOUR;
+const AUTO_REFRESH_STALE_AFTER_MS = 6 * HOUR;
+const CURRENT_YEAR_CACHE_TTL_MS = 30 * 60 * 1000;
 
 // OMNI2 hourly fixed columns (0-based word index) — see the omni2 format doc.
 const COL = { bt: 8, bzGsm: 16, density: 23, speed: 24, kp: 38, dst: 40 } as const;
@@ -36,6 +40,18 @@ interface ArchiveFile {
   updatedAtMs: number;
   rows: Row[]; // sorted ascending by t (hour)
 }
+
+interface CurrentYearCache {
+  year: number;
+  fetchedAtMs: number;
+  rows: Row[];
+}
+
+// Serverless deployments cannot persist a refreshed JSON file. Keep the current-year
+// download in memory as well, so every warm instance can still serve a complete tail.
+let currentYearCache: CurrentYearCache | null = null;
+let currentYearFetchPromise: Promise<CurrentYearCache> | null = null;
+let lastPersistedFetchAtMs = 0;
 
 export interface ArchiveStatus {
   exists: boolean;
@@ -78,9 +94,76 @@ export async function getArchiveStatus(): Promise<ArchiveStatus> {
   };
 }
 
+/**
+ * True when a near-real-time request has outrun the committed archive. Kept pure and
+ * exported so the boundary is covered by tests without making a network request.
+ */
+export function omniArchiveTailNeedsRefresh(
+  localEndMs: number | null,
+  requestedEndMs: number,
+  wallClockMs = Date.now(),
+): boolean {
+  const currentYear = new Date(wallClockMs).getUTCFullYear();
+  const requestedYear = new Date(requestedEndMs).getUTCFullYear();
+  if (requestedYear !== currentYear || requestedEndMs < wallClockMs - AUTO_REFRESH_NEAR_NOW_MS) return false;
+  return localEndMs === null || requestedEndMs - localEndMs > AUTO_REFRESH_STALE_AFTER_MS;
+}
+
+async function getCurrentYearRows(year: number): Promise<CurrentYearCache> {
+  const now = Date.now();
+  if (currentYearCache && currentYearCache.year === year && now - currentYearCache.fetchedAtMs < CURRENT_YEAR_CACHE_TTL_MS) {
+    return currentYearCache;
+  }
+  if (currentYearFetchPromise) return currentYearFetchPromise;
+
+  currentYearFetchPromise = (async () => {
+    const rows = await fetchOmniYearWithRetry(year);
+    const cache = { year, fetchedAtMs: Date.now(), rows };
+    currentYearCache = cache;
+    return cache;
+  })();
+  try {
+    return await currentYearFetchPromise;
+  } finally {
+    currentYearFetchPromise = null;
+  }
+}
+
+/**
+ * Merge the growing SPDF current-year file into the local snapshot when a request ends
+ * near "now". Returning the merged rows (instead of relying on the write) is essential:
+ * Vercel's filesystem is read-only, so persistence is only an optimisation for local or
+ * persistent hosts, never a correctness requirement.
+ */
+async function readFileWithFreshTail(endMs: number): Promise<ArchiveFile | null> {
+  const file = await readFile();
+  const localEndMs = file?.rows.length ? file.rows[file.rows.length - 1][0] : null;
+  if (!omniArchiveTailNeedsRefresh(localEndMs, endMs)) return file;
+
+  const year = new Date(endMs).getUTCFullYear();
+  const fresh = await getCurrentYearRows(year);
+  if (fresh.rows.length === 0) return file;
+
+  const byHour = new Map<number, Row>();
+  if (file) for (const row of file.rows) byHour.set(row[0], row);
+  for (const row of fresh.rows) byHour.set(row[0], row);
+  const merged: ArchiveFile = {
+    updatedAtMs: Math.max(file?.updatedAtMs ?? 0, fresh.fetchedAtMs),
+    rows: [...byHour.values()].sort((a, b) => a[0] - b[0]),
+  };
+
+  // Attempt each newly downloaded tail once. Failure is expected on read-only hosts;
+  // the merged in-memory result above remains fully usable for this and later requests.
+  if (fresh.fetchedAtMs !== lastPersistedFetchAtMs) {
+    lastPersistedFetchAtMs = fresh.fetchedAtMs;
+    await writeFile(merged);
+  }
+  return merged;
+}
+
 /** Slice the archive to [startMs, endMs] into the OmniHistory-shaped result the series route expects. */
 export async function sliceArchive(startMs: number, endMs: number): Promise<ArchiveSlice | null> {
-  const file = await readFile();
+  const file = await readFileWithFreshTail(endMs);
   if (!file || file.rows.length === 0) return null;
   const samples: L1EventSample[] = [];
   const kpSeries: KpPoint[] = [];

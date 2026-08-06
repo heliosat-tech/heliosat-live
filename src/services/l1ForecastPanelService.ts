@@ -34,6 +34,36 @@ export interface L1ForecastHeatmapRow {
   latestLabel: string;
 }
 
+export interface GeomagneticForecastPeak {
+  level: number;
+  code: string;
+  label: string;
+  kp: number;
+  arrivalUtc: string;
+  speed: number;
+  bz: number;
+}
+
+export interface GeomagneticSevereEvent {
+  thresholdCode: 'G3';
+  firstArrivalUtc: string;
+  peak: GeomagneticForecastPeak;
+  etaMinutes: number;
+  durationMinutes: number;
+}
+
+export interface GeomagneticForecastSummary {
+  method: 'l1-coupling-live-v1';
+  thresholdKp: 7;
+  forecastStartUtc: string | null;
+  forecastEndUtc: string | null;
+  availablePoints: number;
+  totalPoints: number;
+  coveragePct: number;
+  peak: GeomagneticForecastPeak | null;
+  severeEvent: GeomagneticSevereEvent | null;
+}
+
 export interface L1ForecastPanelData {
   generatedAtMs: number;
   generatedAtUtc: string;
@@ -67,6 +97,7 @@ export interface L1ForecastPanelData {
     endMs: number | null;
     rows: L1ForecastHeatmapRow[];
   };
+  geomagneticForecast: GeomagneticForecastSummary;
 }
 
 const HISTORY_WINDOW_MS = 2.25 * 60 * 60 * 1000;
@@ -76,6 +107,9 @@ const MAX_CHART_POINTS = 180;
 const MAX_HEATMAP_CELLS = 96;
 const NO_DATA_FILL = '#334155';
 const DANGER_COLORS = ['#34d399', '#a3e635', '#fbbf24', '#fb923c', '#f87171', '#e879f9'] as const;
+const GEOMAGNETIC_SMOOTHING_MS = 30 * 60 * 1000;
+const MIN_SEVERE_EVENT_MS = 10 * 60 * 1000;
+const MAX_EVENT_SAMPLE_GAP_MS = 5 * 60 * 1000;
 
 function toFinite(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -209,9 +243,117 @@ function densityRank(value: number | null) {
 }
 
 function estimateGLevel(point: L1ForecastSeriesPoint) {
-  if (point.speed === null && point.bz === null) return null;
+  if (point.speed === null || point.bz === null) return null;
   const kp = kpFromCoupling(mergingFieldMvM(point.speed, point.bz), point.speed);
   return classifyGFromKp(kp).level;
+}
+
+interface EstimatedGeomagneticPoint extends GeomagneticForecastPeak {
+  t: number;
+}
+
+function mean(values: number[]) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function publicPeak(point: EstimatedGeomagneticPoint): GeomagneticForecastPeak {
+  return {
+    level: point.level,
+    code: point.code,
+    label: point.label,
+    kp: point.kp,
+    arrivalUtc: point.arrivalUtc,
+    speed: point.speed,
+    bz: point.bz,
+  };
+}
+
+/**
+ * Operator-facing G forecast over the already propagated L1 arrival series. A 30-minute
+ * trailing mean damps one-minute spikes, and G3 notifications require ten sustained minutes.
+ * This is the transparent live calculation; the separately validated GBDT remains a research
+ * candidate and is intentionally not loaded here.
+ */
+export function summarizeGeomagneticForecast(
+  points: L1ForecastSeriesPoint[],
+  nowMs: number,
+): GeomagneticForecastSummary {
+  const sorted = points
+    .filter(point => Number.isFinite(point.t))
+    .slice()
+    .sort((a, b) => a.t - b.t);
+  const future = sorted.filter(point => point.t >= nowMs && point.t <= nowMs + HEATMAP_FUTURE_MS);
+  const estimated: EstimatedGeomagneticPoint[] = [];
+
+  for (const point of future) {
+    const trailing = sorted.filter(candidate => candidate.t <= point.t && candidate.t >= point.t - GEOMAGNETIC_SMOOTHING_MS);
+    const speedValues = trailing.map(candidate => candidate.speed).filter((value): value is number => value !== null && Number.isFinite(value));
+    const bzValues = trailing.map(candidate => candidate.bz).filter((value): value is number => value !== null && Number.isFinite(value));
+    if (speedValues.length === 0 || bzValues.length === 0) continue;
+    const speed = mean(speedValues);
+    const bz = mean(bzValues);
+    const kp = Math.round(kpFromCoupling(mergingFieldMvM(speed, bz), speed) * 10) / 10;
+    const scale = classifyGFromKp(kp);
+    estimated.push({
+      t: point.t,
+      level: scale.level,
+      code: scale.code,
+      label: scale.label,
+      kp,
+      arrivalUtc: new Date(point.t).toISOString(),
+      speed: Math.round(speed),
+      bz: Math.round(bz * 10) / 10,
+    });
+  }
+
+  const peak = estimated.reduce<EstimatedGeomagneticPoint | null>((best, point) => {
+    if (!best || point.level > best.level || (point.level === best.level && point.kp > best.kp)) return point;
+    return best;
+  }, null);
+
+  const runs: EstimatedGeomagneticPoint[][] = [];
+  let current: EstimatedGeomagneticPoint[] = [];
+  for (const point of estimated) {
+    if (point.level < 3) {
+      if (current.length) runs.push(current);
+      current = [];
+      continue;
+    }
+    const previous = current[current.length - 1];
+    if (previous && point.t - previous.t > MAX_EVENT_SAMPLE_GAP_MS) {
+      runs.push(current);
+      current = [];
+    }
+    current.push(point);
+  }
+  if (current.length) runs.push(current);
+
+  const severeRun = runs.find(run => {
+    const first = run[0];
+    const last = run[run.length - 1];
+    return last.t - first.t >= MIN_SEVERE_EVENT_MS;
+  }) ?? null;
+  const severePeak = severeRun?.reduce((best, point) => (
+    point.level > best.level || (point.level === best.level && point.kp > best.kp) ? point : best
+  )) ?? null;
+
+  return {
+    method: 'l1-coupling-live-v1',
+    thresholdKp: 7,
+    forecastStartUtc: future.length ? new Date(future[0].t).toISOString() : null,
+    forecastEndUtc: future.length ? new Date(future[future.length - 1].t).toISOString() : null,
+    availablePoints: estimated.length,
+    totalPoints: future.length,
+    coveragePct: future.length ? Math.round((estimated.length / future.length) * 1000) / 10 : 0,
+    peak: peak ? publicPeak(peak) : null,
+    severeEvent: severeRun && severePeak ? {
+      thresholdCode: 'G3',
+      firstArrivalUtc: severeRun[0].arrivalUtc,
+      peak: publicPeak(severePeak),
+      etaMinutes: Math.max(0, Math.round((severeRun[0].t - nowMs) / 60_000)),
+      durationMinutes: Math.max(10, Math.round((severeRun[severeRun.length - 1].t - severeRun[0].t) / 60_000)),
+    } : null,
+  };
 }
 
 function buildHeatmapRows(points: L1ForecastSeriesPoint[]): L1ForecastHeatmapRow[] {
@@ -369,6 +511,7 @@ export async function buildL1ForecastPanelData(): Promise<L1ForecastPanelData> {
   const fallbackHeatmapPoints = heatmapPoints.length ? heatmapPoints : forecast.slice(-MAX_HEATMAP_CELLS);
   const heatmapStart = fallbackHeatmapPoints.length ? fallbackHeatmapPoints[0].t : null;
   const heatmapEnd = fallbackHeatmapPoints.length ? fallbackHeatmapPoints[fallbackHeatmapPoints.length - 1].t : null;
+  const geomagneticForecast = summarizeGeomagneticForecast(forecast, nowMs);
 
   return {
     generatedAtMs: nowMs,
@@ -403,5 +546,6 @@ export async function buildL1ForecastPanelData(): Promise<L1ForecastPanelData> {
       endMs: heatmapEnd,
       rows: buildHeatmapRows(fallbackHeatmapPoints),
     },
+    geomagneticForecast,
   };
 }

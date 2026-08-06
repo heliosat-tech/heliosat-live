@@ -331,7 +331,7 @@ interface TransitCoverageDiagnostics {
   sourceCounts: Record<string, number>;
   largestGaps: Array<{ variable: string; startUtc: string; endUtc: string; durationMinutes: number; reason: string }>;
 }
-interface ReplaySeries { window: string; startMs: number; endMs: number; gForecast: GForecastPoint[]; coverage?: TransitCoverageDiagnostics }
+interface ReplaySeries { window: string; startMs: number; endMs: number; gForecast: GForecastPoint[]; coverage?: TransitCoverageDiagnostics; loadedAtMs: number }
 interface TransitSample {
   detectedMs: number | null;
   arrivalMs: number;
@@ -363,21 +363,31 @@ const CORRIDOR_WINDOWS: Array<{ key: string; label: string }> = [
   { key: '1y', label: '1 y' },
 ];
 
-// Corridor replay series cached per window for the whole page session, so re-selecting
-// or switching between windows is instant. The cache is module-level (not per-component)
-// so it survives any remount. The windows are NOT subsets of one another at the same
+// Corridor replay series cached briefly per window, so re-selecting or switching between
+// windows is instant without pinning a historical window for the whole page session. The
+// cache is module-level (not per-component), so it survives any remount. The windows are NOT subsets of one another at the same
 // resolution — each is downsampled to a fixed point budget over its own span, so a 24 h
 // view sliced out of the 3 mo data would be far too coarse. Hence each is fetched natively
 // and cached on its own; a background prefetch warms the rest after the first one opens.
 const REPLAY_CACHE = new Map<string, ReplaySeries>();
-async function loadCorridorWindow(windowKey: string): Promise<ReplaySeries | null> {
+const REPLAY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function getCachedCorridorWindow(windowKey: string): ReplaySeries | null {
   const cached = REPLAY_CACHE.get(windowKey);
+  if (!cached) return null;
+  if (Date.now() - cached.loadedAtMs < REPLAY_CACHE_TTL_MS) return cached;
+  REPLAY_CACHE.delete(windowKey);
+  return null;
+}
+
+async function loadCorridorWindow(windowKey: string): Promise<ReplaySeries | null> {
+  const cached = getCachedCorridorWindow(windowKey);
   if (cached) return cached;
   try {
     const r = await fetch(`/api/console/corridor?window=${windowKey}`, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } });
     if (!r.ok) return null;
     const s = (await r.json()) as { startMs: number; endMs: number; gForecast?: GForecastPoint[]; coverage?: TransitCoverageDiagnostics };
-    const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t), coverage: s.coverage };
+    const series: ReplaySeries = { window: windowKey, startMs: s.startMs, endMs: s.endMs, gForecast: (s.gForecast ?? []).slice().sort((a, b) => a.t - b.t), coverage: s.coverage, loadedAtMs: Date.now() };
     REPLAY_CACHE.set(windowKey, series);
     return series;
   } catch {
@@ -699,17 +709,19 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
   // an already-loaded window — including one warmed by the background prefetch — is instant.
   const selectWindow = useCallback((key: string) => {
     setWindowKey(key);
-    const cached = REPLAY_CACHE.get(key);
+    const cached = getCachedCorridorWindow(key);
     if (cached) setReplay(cached);
   }, []);
 
   useEffect(() => {
     if (windowKey === 'live') return;
     let cancelled = false;
-    // loadCorridorWindow resolves the cached series immediately on a hit (same reference,
-    // so this setReplay is a no-op re-render) and fetches once on a miss.
-    void loadCorridorWindow(windowKey).then(series => { if (!cancelled && series) setReplay(series); });
-    return () => { cancelled = true; };
+    // Refresh while the replay remains open; otherwise a long-running wallboard would
+    // keep the same right edge forever even though the server archive is advancing.
+    const refresh = () => void loadCorridorWindow(windowKey).then(series => { if (!cancelled && series) setReplay(series); });
+    refresh();
+    const timer = window.setInterval(refresh, REPLAY_CACHE_TTL_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [windowKey]);
 
   // The first time any replay window is opened, warm the OTHER windows in the background
@@ -720,7 +732,7 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
     prefetchedRef.current = true;
     void (async () => {
       for (const { key } of CORRIDOR_WINDOWS) {
-        if (key === 'live' || REPLAY_CACHE.has(key)) continue;
+        if (key === 'live' || getCachedCorridorWindow(key)) continue;
         await loadCorridorWindow(key);
         await new Promise(resolve => setTimeout(resolve, 400));
       }
@@ -825,6 +837,9 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
       title: `Largest remaining gaps\n${gapText}`,
     };
   }, [activeReplay, timeZone]);
+  const replayRiskCoverage = activeReplay?.coverage && activeReplay.coverage.totalBins > 0
+    ? activeReplay.coverage.available.gRisk / activeReplay.coverage.totalBins
+    : null;
 
   // Live corridor inbound peak, derived from the same in-transit parcels as the bars.
   const liveCorridor = useMemo(() => {
@@ -903,6 +918,12 @@ function CmeTransitScene({ current, inbound, nowMs }: { current: CurrentDto; inb
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: peakStyle.dot }} />
           Peak G{windowPeak.level} {peakStyle.word.toLowerCase()} in the last {windowKey}
           <span className="text-slate-400">· {fmtDateTime(new Date(windowPeak.atMs).toISOString(), timeZone)} {tzLabel}</span>
+        </div>
+      ) : isReplay && replayRiskCoverage !== null && replayRiskCoverage < 0.9 ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-400/30 bg-amber-400/[0.07] px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-amber-200">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          Incomplete replay · G-risk available for {Math.round(replayRiskCoverage * 100)}% of this window
+          <span className="text-amber-200/70">· insufficient coverage to call the period quiet</span>
         </div>
       ) : hasData && (isReplay ? !windowPeak.hasRiskData : !liveCorridor.hasRiskData) ? (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400">

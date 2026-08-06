@@ -31,7 +31,7 @@ import type {
   L1ForecastSeriesPoint,
 } from '@/services/l1ForecastPanelService';
 
-type ForecastVariable = 'speed' | 'bz' | 'density' | 'bt';
+export type ForecastVariable = 'speed' | 'bz' | 'density' | 'bt';
 
 interface L1ForecastPanelProps {
   data: L1ForecastPanelData;
@@ -145,7 +145,6 @@ let liveForecastLatest: L1ForecastPanelData | null = null;
 const liveForecastSubscribers = new Set<(data: L1ForecastPanelData) => void>();
 
 async function refreshLiveForecast() {
-  if (typeof document !== 'undefined' && document.hidden) return;
   try {
     const response = await fetch('/api/l1-forecast', {
       cache: 'no-store',
@@ -175,7 +174,7 @@ function subscribeLiveForecast(listener: (data: L1ForecastPanelData) => void) {
   };
 }
 
-function useLiveL1ForecastData(initial: L1ForecastPanelData): L1ForecastPanelData {
+export function useLiveL1ForecastData(initial: L1ForecastPanelData): L1ForecastPanelData {
   const [data, setData] = useState(
     liveForecastLatest && liveForecastLatest.generatedAtMs > initial.generatedAtMs ? liveForecastLatest : initial,
   );
@@ -553,7 +552,7 @@ function SeriesLegend() {
   );
 }
 
-function ForecastLineChart({
+export function ForecastLineChart({
   data,
   variable,
   nowMs,

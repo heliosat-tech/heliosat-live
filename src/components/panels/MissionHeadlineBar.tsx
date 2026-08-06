@@ -118,7 +118,7 @@ export const MissionHeadlineBar: React.FC<MissionHeadlineBarProps> = ({ l1, obse
       {/* Forecast G implied by the current L1 wind (muted: it's a prediction) */}
       <div className="flex min-w-0 flex-1 items-center border-l border-slate-800/70 px-4 py-2.5">
         <div className="min-w-0">
-          <div className="font-mono text-[8px] uppercase tracking-widest text-slate-500">Pronóstico G · L1→Tierra</div>
+          <div className="font-mono text-[8px] uppercase tracking-widest text-slate-500">Pronóstico G · próxima parcela</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded border border-slate-700/70 bg-slate-950/50 px-1.5 py-0.5 font-mono text-[11px]">
               <span className={`h-1.5 w-1.5 rounded-full ${forecastStyle.dot}`} />
@@ -128,7 +128,7 @@ export const MissionHeadlineBar: React.FC<MissionHeadlineBarProps> = ({ l1, obse
               <span className="whitespace-nowrap font-mono text-[10px] text-cyan-300/80">llega ~{l1.latest.transitMinutes.toFixed(0)} min</span>
             )}
           </div>
-          <div className="font-mono text-[7px] uppercase tracking-widest text-slate-600">pronóstico · no es Kp/G oficial</div>
+          <div className="font-mono text-[7px] uppercase tracking-widest text-slate-600">señal puntual · alerta G3+ exige ≥10 min sostenidos</div>
         </div>
       </div>
 
