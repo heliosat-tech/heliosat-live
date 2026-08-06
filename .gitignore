@@ -19,6 +19,7 @@ __pycache__/
 # Ignore the ML-model dir except the small trained artifact the live forecast loads at runtime.
 data/ml-model/*
 !data/ml-model/model.json
+!data/ml-model/geomagnetic-storm-candidate.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -37,3 +38,9 @@ data/console/*
 
 # University report (sources, generated plots, compiled PDF) — local only
 docs/report/
+tmp/
+output/pdf/*.aux
+output/pdf/*.fdb_latexmk
+output/pdf/*.fls
+output/pdf/*.log
+output/pdf/*.out

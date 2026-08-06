@@ -2,7 +2,9 @@
  * Local ACE L1 archive for the Internal Console — the historical counterpart of the
  * OMNI (near-Earth) archive, but for the solar wind measured AT L1 (ACE). Lets the
  * 1y/5y charts show the real "L1 detected" + "MRU forecast" lines instead of near-Earth
- * only. (Terminology: L1 = the Lagrange point, NEVER "near Earth"; near-Earth = OMNI.)
+ * only. NOAA's rolling ACE hourly products bridge the recent processing delay before
+ * the CDAWeb/OMNI archives catch up. (Terminology: L1 = the Lagrange point, NEVER
+ * "near Earth"; near-Earth = OMNI.)
  *
  * Source: CDAWeb HAPI hourly products `AC_H2_MFI` (|B| + Bz GSM) and `AC_H2_SWE`
  * (speed + density). The full-resolution ACE files are HDF4 (impractical in Node) and
@@ -20,9 +22,13 @@ const STORE_DIR = path.join(process.cwd(), 'data', 'console');
 const STORE_PATH = path.join(STORE_DIR, 'ace-archive.json');
 
 const HAPI_DATA = 'https://cdaweb.gsfc.nasa.gov/hapi/data';
+const NOAA_ACE_MAG_HOURLY = 'https://services.swpc.noaa.gov/json/ace/mag/ace_mag_1h.json';
+const NOAA_ACE_SWEPAM_HOURLY = 'https://services.swpc.noaa.gov/json/ace/swepam/ace_swepam_1h.json';
 const DEFAULT_YEARS = 6;
 const COVERED_THRESHOLD = 4000; // hourly rows in a past year to consider it archived
 const FETCH_TIMEOUT_MS = 90_000;
+const NOAA_FETCH_TIMEOUT_MS = 15_000;
+const RECENT_ACE_CACHE_TTL_MS = 30 * 60 * 1000;
 const HOUR = 3_600_000;
 
 // Compact columnar row: [t, v(km/s), n(/cc), bt(nT), bz GSM(nT)]. null = missing.
@@ -32,6 +38,14 @@ interface ArchiveFile {
   updatedAtMs: number;
   rows: Row[];
 }
+
+interface RecentAceCache {
+  fetchedAtMs: number;
+  samples: L1EventSample[];
+}
+
+let recentAceCache: RecentAceCache | null = null;
+let recentAceFetchPromise: Promise<RecentAceCache> | null = null;
 
 export interface AceArchiveStatus {
   exists: boolean;
@@ -75,6 +89,92 @@ export async function sliceAceArchive(startMs: number, endMs: number): Promise<A
     samples.push({ ms: t, speedKmS: v, densityPerCm3: n, bzNt: bz, btNt: bt });
   }
   return { samples, startMs, endMs };
+}
+
+function utcMs(value: unknown): number | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const normalized = /(?:Z|[+-]\d\d:\d\d)$/i.test(value) ? value : `${value}Z`;
+  const ms = new Date(normalized).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function objectNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = Number(record[key]);
+  return Number.isFinite(value) && Math.abs(value) < 1e20 ? value : null;
+}
+
+/**
+ * Parse NOAA's operational ACE hourly products. They retain roughly one month and
+ * bridge the processing delay between the one-day RTSW feed and definitive OMNI.
+ */
+export function parseNoaaAceHourly(magRaw: unknown, swepamRaw: unknown): L1EventSample[] {
+  const byHour = new Map<number, L1EventSample>();
+  if (Array.isArray(magRaw)) {
+    for (const value of magRaw) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const record = value as Record<string, unknown>;
+      const ms = utcMs(record.time_tag);
+      if (ms === null) continue;
+      const existing = byHour.get(ms) ?? { ms, speedKmS: null, densityPerCm3: null, bzNt: null, btNt: null };
+      existing.bzNt = objectNumber(record, 'gsm_bz');
+      existing.btNt = objectNumber(record, 'bt');
+      byHour.set(ms, existing);
+    }
+  }
+  if (Array.isArray(swepamRaw)) {
+    for (const value of swepamRaw) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const record = value as Record<string, unknown>;
+      const ms = utcMs(record.time_tag);
+      if (ms === null) continue;
+      const existing = byHour.get(ms) ?? { ms, speedKmS: null, densityPerCm3: null, bzNt: null, btNt: null };
+      existing.speedKmS = objectNumber(record, 'speed');
+      existing.densityPerCm3 = objectNumber(record, 'dens');
+      byHour.set(ms, existing);
+    }
+  }
+  return [...byHour.values()]
+    .filter(sample => sample.speedKmS !== null || sample.densityPerCm3 !== null || sample.bzNt !== null || sample.btNt !== null)
+    .sort((a, b) => a.ms - b.ms);
+}
+
+async function fetchNoaaJson(url: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NOAA_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { cache: 'no-store', signal: controller.signal });
+    return response.ok ? await response.json() : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Recent ACE L1 history from NOAA's rolling hourly products (about 31 days). */
+export async function fetchRecentAceHourlyHistory(): Promise<AceArchiveSlice | null> {
+  const now = Date.now();
+  if (recentAceCache && now - recentAceCache.fetchedAtMs < RECENT_ACE_CACHE_TTL_MS) {
+    const { samples } = recentAceCache;
+    return samples.length ? { samples, startMs: samples[0].ms, endMs: samples[samples.length - 1].ms } : null;
+  }
+  if (!recentAceFetchPromise) {
+    recentAceFetchPromise = (async () => {
+      const [mag, swepam] = await Promise.all([
+        fetchNoaaJson(NOAA_ACE_MAG_HOURLY),
+        fetchNoaaJson(NOAA_ACE_SWEPAM_HOURLY),
+      ]);
+      const cache = { fetchedAtMs: Date.now(), samples: parseNoaaAceHourly(mag, swepam) };
+      recentAceCache = cache;
+      return cache;
+    })();
+  }
+  try {
+    const { samples } = await recentAceFetchPromise;
+    return samples.length ? { samples, startMs: samples[0].ms, endMs: samples[samples.length - 1].ms } : null;
+  } finally {
+    recentAceFetchPromise = null;
+  }
 }
 
 /** HAPI numeric cell → null on fill (AC_H2 uses ~-1e31) or, for positive-only fields, negatives. */

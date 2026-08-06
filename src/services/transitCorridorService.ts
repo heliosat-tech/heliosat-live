@@ -1,7 +1,7 @@
 import { fetchLiveL1History } from './liveL1HistoryService';
 import { propagateL1Series, NOMINAL_BOW_SHOCK_DISTANCE_KM, type L1Sample } from './mruForecastService';
 import { sliceArchive } from './omniArchiveStore';
-import { sliceAceArchive } from './aceArchiveStore';
+import { fetchRecentAceHourlyHistory, sliceAceArchive } from './aceArchiveStore';
 import type { L1EventSample } from './liveEventService';
 import {
   resolvePhysicalDriverSample,
@@ -15,6 +15,7 @@ const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
 const LIVE_SOURCE_LABEL = 'L1 · active RTSW';
 const ACE_SOURCE_LABEL = 'ACE L1 archive';
+const RECENT_ACE_SOURCE_LABEL = 'ACE L1 · NOAA rolling hourly';
 const OMNI_SOURCE_LABEL = 'Internal historical reference fallback';
 const LIVE_ALIGNMENT_TOLERANCE_MS = 2 * MINUTE;
 const ARCHIVE_ALIGNMENT_TOLERANCE_MS = 30 * MINUTE;
@@ -284,9 +285,13 @@ async function buildTransitCorridorPoints(source: 'live' | 'archive', days: numb
   }
 
   const candidates: PhysicalDriverCandidate[] = [];
-  const omni = await sliceArchive(start, now);
+  const [omni, recentAce, ace] = await Promise.all([
+    sliceArchive(start, now),
+    fetchRecentAceHourlyHistory(),
+    sliceAceArchive(start, now),
+  ]);
   if (omni && omni.samples.length > 0) candidates.push(...omni.samples.map(arrivalAlignedArchiveCandidate));
-  const ace = await sliceAceArchive(start, now);
+  if (recentAce && recentAce.samples.length > 0) candidates.push(...candidatesFromL1(recentAce.samples, NOMINAL_BOW_SHOCK_DISTANCE_KM, start, now, 'ace_archive', RECENT_ACE_SOURCE_LABEL, 2));
   if (ace && ace.samples.length > 0) candidates.push(...candidatesFromL1(ace.samples, NOMINAL_BOW_SHOCK_DISTANCE_KM, start, now, 'ace_archive', ACE_SOURCE_LABEL, 2));
   candidates.push(...liveCandidates);
 

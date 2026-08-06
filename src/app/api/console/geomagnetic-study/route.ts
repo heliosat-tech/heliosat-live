@@ -19,7 +19,7 @@ export async function GET() {
     return NextResponse.json({ study }, { headers: { 'Cache-Control': 'no-store' } });
   } catch {
     return NextResponse.json(
-      { study: null, error: 'Geomagnetic-storm study artifact not found. Run scripts/generate_geomagnetic_storm_study.py.' },
+      { study: null, error: 'Geomagnetic-storm study artifact not found. Run scripts/train_geomagnetic_storm_model.py.' },
       { status: 422, headers: { 'Cache-Control': 'no-store' } },
     );
   }

@@ -295,14 +295,14 @@ export const ResizableMissionLayout: React.FC<ResizableMissionLayoutProps> = ({
       >
         <aside className="relative min-h-0 min-w-0 xl:h-full">
           <div className="flex min-h-0 flex-col gap-2 xl:h-full xl:overflow-y-auto xl:pr-1">
-            <div className="hidden shrink-0 px-1 font-mono text-[9px] uppercase tracking-[0.25em] text-cyan-300/60 xl:block">Ahora · L1</div>
+            <div className="hidden shrink-0 px-1 font-mono text-[9px] uppercase tracking-[0.25em] text-cyan-300/60 xl:block">Pronóstico · G3+</div>
             {left}
           </div>
           <ColumnResizeHandle
             active={activeResizeTarget === 'left'}
             edge="right"
-            label="Ajustar anchura de Ahora L1"
-            title="Arrastra para ampliar o comprimir Ahora L1"
+            label="Ajustar anchura del pronóstico G3+"
+            title="Arrastra para ampliar o comprimir el pronóstico G3+"
             onPointerDown={event => beginColumnResize('left', event)}
             onDoubleClick={() => setSizing(current => ({ ...current, leftWidth: DEFAULT_SIZING.leftWidth }))}
             onKeyDown={event => {

@@ -3,7 +3,8 @@ import { ExpandableMissionWidget, ResizableMissionLayout } from '@/components/la
 import { DashboardSourceStatusBridge } from '@/components/layout/DashboardSourceStatusBridge';
 import { classifyL1SourceStatus, type SourceStatus } from '@/components/layout/sourceStatus';
 import { MissionHeadlineBar } from '@/components/panels/MissionHeadlineBar';
-import { L1PropagationPanel, ArrivalHeatmapPanel } from '@/components/panels/L1ForecastPanel';
+import { ArrivalHeatmapPanel } from '@/components/panels/L1ForecastPanel';
+import { GeomagneticStormForecastPanel } from '@/components/panels/GeomagneticStormForecastPanel';
 import { SatelliteWatchlistPanel } from '@/components/panels/SatelliteWatchlistPanel';
 import { AlertsPanel } from '@/components/panels/AlertsPanel';
 import { DataReadinessPanel } from '@/components/panels/DataReadinessPanel';
@@ -19,6 +20,7 @@ import { fetchNoaaAlerts } from '@/services/noaaAlertsService';
 import { fetchTleGroup, type CelesTrakResponse } from '@/services/celestrakService';
 import { buildL1ForecastPanelData } from '@/services/l1ForecastPanelService';
 import { fetchNoaaStormScales } from '@/services/noaaStormScalesService';
+import { loadG3StudySummary } from '@/services/geomagneticStormStudySummaryService';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -44,7 +46,7 @@ async function fetchTleForRender(): Promise<CelesTrakResponse> {
 }
 
 export default async function Home() {
-  const [noaaMagData, noaaPlasmaData, noaaEphemerisData, noaaAlertsData, celestrakData, l1ForecastData, stormScalesData] = await Promise.all([
+  const [noaaMagData, noaaPlasmaData, noaaEphemerisData, noaaAlertsData, celestrakData, l1ForecastData, stormScalesData, g3StudySummary] = await Promise.all([
     fetchNoaaMagnetometerData(),
     fetchNoaaPlasmaData(),
     fetchNoaaEphemerisData(),
@@ -52,6 +54,7 @@ export default async function Home() {
     fetchTleForRender(),
     buildL1ForecastPanelData(),
     fetchNoaaStormScales(),
+    loadG3StudySummary(),
   ]);
 
   const magneticAvailable = l1ForecastData.latest.bt !== null || l1ForecastData.latest.bz !== null;
@@ -109,16 +112,16 @@ export default async function Home() {
               <ResizableMissionLayout
                 left={(
                   <ExpandableMissionWidget
-                    title="L1 -> Earth Propagation"
+                    title="Geomagnetic Storm Forecast · G3+"
                     className="xl:min-h-0 xl:flex-1"
                     detail={(
                       <div className="h-full min-h-[720px]">
-                        <L1PropagationPanel data={l1ForecastData} expanded />
+                        <GeomagneticStormForecastPanel data={l1ForecastData} study={g3StudySummary} expanded />
                       </div>
                     )}
                   >
                     <div className="min-h-[760px] xl:h-full xl:min-h-0">
-                      <L1PropagationPanel data={l1ForecastData} />
+                      <GeomagneticStormForecastPanel data={l1ForecastData} study={g3StudySummary} />
                     </div>
                   </ExpandableMissionWidget>
                 )}
